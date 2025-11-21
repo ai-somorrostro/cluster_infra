@@ -54,10 +54,23 @@ fi
 
 echo -e "${GREEN}[✓]${NC} qemu-guest-agent activo"
 
+# Función para leer archivo de log de la VM
+read_vm_file() {
+    local vmid=$1
+    local file=$2
+    local cat_out=$(pvesh create /nodes/$NODE/qemu/$vmid/agent/exec --command "cat" --command "$file" --output-format json 2>/dev/null)
+    local pid=$(echo "$cat_out" | grep -oP '"pid":\K[0-9]+')
+    if [ -n "$pid" ]; then
+        sleep 1
+        pvesh get /nodes/$NODE/qemu/$vmid/agent/exec-status --pid $pid --output-format json 2>/dev/null | grep -oP '"out-data":"\K.*"' | sed 's/\\n/\n/g' | sed 's/\\t/\t/g' | sed 's/\\r//g' | sed 's/^"//' | sed 's/"$//'
+    fi
+}
+
 # Actualizar cache de apt
 echo -e "\n${YELLOW}[*]${NC} Actualizando cache de apt..."
-# Usando múltiples --command para formar el array
-UPDATE_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "apt-get" --command "update" --output-format json 2>/dev/null)
+# Redirigimos salida a archivo temporal para debug
+UPDATE_CMD="apt-get update > /tmp/apt_update.log 2>&1"
+UPDATE_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "sh" --command "-c" --command "$UPDATE_CMD" --output-format json 2>/dev/null)
 UPDATE_PID=$(echo "$UPDATE_OUTPUT" | grep -oP '"pid":\K[0-9]+')
 
 if [ -z "$UPDATE_PID" ]; then
@@ -81,14 +94,16 @@ if [ "$EXIT_CODE" == "0" ]; then
     echo -e "${GREEN}[✓]${NC} Cache actualizado"
 else
     echo -e "${RED}[✗]${NC} Error al actualizar cache (exit code: $EXIT_CODE)"
+    echo -e "${YELLOW}--- Output del error ---${NC}"
+    read_vm_file $VMID "/tmp/apt_update.log"
+    echo -e "${YELLOW}------------------------${NC}"
     exit 1
 fi
 
 # Instalar paquetes
 echo -e "\n${YELLOW}[*]${NC} Instalando paquetes..."
 # Construir el comando de instalación complejo
-# Usamos sh -c para poder pasar variables de entorno y argumentos complejos
-INSTALL_CMD="DEBIAN_FRONTEND=noninteractive apt-get install -y $PACKAGES"
+INSTALL_CMD="DEBIAN_FRONTEND=noninteractive apt-get install -y $PACKAGES > /tmp/apt_install.log 2>&1"
 INSTALL_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "sh" --command "-c" --command "$INSTALL_CMD" --output-format json 2>/dev/null)
 INSTALL_PID=$(echo "$INSTALL_OUTPUT" | grep -oP '"pid":\K[0-9]+')
 
@@ -113,6 +128,9 @@ if [ "$EXIT_CODE" == "0" ]; then
     echo -e "${GREEN}[✓]${NC} Instalación completada"
 else
     echo -e "${RED}[✗]${NC} Error al instalar (exit code: $EXIT_CODE)"
+    echo -e "${YELLOW}--- Output del error ---${NC}"
+    read_vm_file $VMID "/tmp/apt_install.log"
+    echo -e "${YELLOW}------------------------${NC}"
     exit 1
 fi
 
