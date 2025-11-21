@@ -56,7 +56,7 @@ echo -e "${GREEN}[✓]${NC} qemu-guest-agent activo"
 
 # Actualizar cache de apt
 echo -e "\n${YELLOW}[*]${NC} Actualizando cache de apt..."
-UPDATE_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command='["sudo","apt","update"]' 2>/dev/null)
+UPDATE_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command='["sh","-c","sudo apt update 2>&1"]' 2>/dev/null)
 UPDATE_PID=$(echo "$UPDATE_OUTPUT" | grep -oP '"pid":\K[0-9]+')
 
 if [ -z "$UPDATE_PID" ]; then
@@ -64,18 +64,26 @@ if [ -z "$UPDATE_PID" ]; then
     exit 1
 fi
 
-sleep 5
+# Esperar y verificar el resultado
+for i in {1..10}; do
+    sleep 1
+    EXEC_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid=$UPDATE_PID 2>/dev/null || echo "")
+    if echo "$EXEC_STATUS" | grep -q "exited"; then
+        break
+    fi
+done
 
-if pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid=$UPDATE_PID >/dev/null 2>&1; then
+EXIT_CODE=$(echo "$EXEC_STATUS" | grep -oP '"exitcode":\K[0-9]+' || echo "1")
+if [ "$EXIT_CODE" == "0" ]; then
     echo -e "${GREEN}[✓]${NC} Cache actualizado"
 else
-    echo -e "${RED}[✗]${NC} Error al actualizar cache"
+    echo -e "${RED}[✗]${NC} Error al actualizar cache (exit code: $EXIT_CODE)"
     exit 1
 fi
 
 # Instalar paquetes
 echo -e "\n${YELLOW}[*]${NC} Instalando paquetes..."
-CMD="sudo DEBIAN_FRONTEND=noninteractive apt install -y $PACKAGES"
+CMD="sudo DEBIAN_FRONTEND=noninteractive apt install -y $PACKAGES 2>&1"
 INSTALL_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command="[\"sh\",\"-c\",\"$CMD\"]" 2>/dev/null)
 INSTALL_PID=$(echo "$INSTALL_OUTPUT" | grep -oP '"pid":\K[0-9]+')
 
@@ -84,16 +92,29 @@ if [ -z "$INSTALL_PID" ]; then
     exit 1
 fi
 
-sleep 10
+# Esperar y verificar el resultado
+for i in {1..20}; do
+    sleep 1
+    EXEC_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid=$INSTALL_PID 2>/dev/null || echo "")
+    if echo "$EXEC_STATUS" | grep -q "exited"; then
+        break
+    fi
+done
 
-echo -e "${GREEN}[✓]${NC} Instalación completada"
+EXIT_CODE=$(echo "$EXEC_STATUS" | grep -oP '"exitcode":\K[0-9]+' || echo "1")
+if [ "$EXIT_CODE" == "0" ]; then
+    echo -e "${GREEN}[✓]${NC} Instalación completada"
+else
+    echo -e "${RED}[✗]${NC} Error al instalar (exit code: $EXIT_CODE)"
+    exit 1
+fi
 
 # Verificar cada paquete
 echo -e "\n${YELLOW}[*]${NC} Verificando instalación..."
 for PKG in $PACKAGES; do
     CHECK_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command="[\"dpkg\",\"-l\",\"$PKG\"]" 2>/dev/null)
     CHECK_PID=$(echo "$CHECK_OUTPUT" | grep -oP '"pid":\K[0-9]+')
-    sleep 1
+    sleep 2
     
     DPKG_OUTPUT=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid=$CHECK_PID 2>/dev/null || echo "")
     if echo "$DPKG_OUTPUT" | grep -q "^ii"; then
@@ -107,4 +128,3 @@ done
 echo -e "\n=========================================="
 echo "Proceso completado"
 echo "=========================================="
-
