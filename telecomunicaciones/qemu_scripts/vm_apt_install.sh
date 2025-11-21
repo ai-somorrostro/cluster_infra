@@ -56,7 +56,7 @@ echo -e "${GREEN}[✓]${NC} qemu-guest-agent activo"
 
 # Actualizar cache de apt
 echo -e "\n${YELLOW}[*]${NC} Actualizando cache de apt..."
-UPDATE_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command='["apt","update"]' 2>/dev/null)
+UPDATE_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command='["sudo","apt","update"]' 2>/dev/null)
 UPDATE_PID=$(echo "$UPDATE_OUTPUT" | grep -oP '"pid":\K[0-9]+')
 
 if [ -z "$UPDATE_PID" ]; then
@@ -64,7 +64,7 @@ if [ -z "$UPDATE_PID" ]; then
     exit 1
 fi
 
-sleep 3
+sleep 5
 
 if pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid=$UPDATE_PID >/dev/null 2>&1; then
     echo -e "${GREEN}[✓]${NC} Cache actualizado"
@@ -75,7 +75,7 @@ fi
 
 # Instalar paquetes
 echo -e "\n${YELLOW}[*]${NC} Instalando paquetes..."
-CMD="DEBIAN_FRONTEND=noninteractive apt install -y $PACKAGES"
+CMD="sudo DEBIAN_FRONTEND=noninteractive apt install -y $PACKAGES"
 INSTALL_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command="[\"sh\",\"-c\",\"$CMD\"]" 2>/dev/null)
 INSTALL_PID=$(echo "$INSTALL_OUTPUT" | grep -oP '"pid":\K[0-9]+')
 
@@ -84,7 +84,7 @@ if [ -z "$INSTALL_PID" ]; then
     exit 1
 fi
 
-sleep 5
+sleep 10
 
 echo -e "${GREEN}[✓]${NC} Instalación completada"
 
