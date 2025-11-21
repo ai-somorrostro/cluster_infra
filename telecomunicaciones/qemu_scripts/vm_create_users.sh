@@ -73,6 +73,22 @@ for VMID in "${VMIDS[@]}"; do
         continue
     fi
     
+    # Habilitar autenticación por password en SSH
+    echo -n "Habilitando password SSH... "
+    if run_cmd "sh" "-c" "sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config"; then
+        echo -e "${GREEN}[OK]${NC}"
+    else
+        echo -e "${YELLOW}[WARN]${NC}"
+    fi
+    
+    # Reiniciar SSH
+    echo -n "Reiniciando SSH... "
+    if run_cmd "systemctl" "restart" "ssh"; then
+        echo -e "${GREEN}[OK]${NC}"
+    else
+        echo -e "${YELLOW}[WARN]${NC}"
+    fi
+    
     # Verificar si docker existe
     echo -n "Verificando docker... "
     if run_cmd "getent" "group" "docker"; then
@@ -158,4 +174,3 @@ done
 echo -e "${GREEN}=========================================="
 echo "Completado"
 echo "==========================================${NC}"
-
