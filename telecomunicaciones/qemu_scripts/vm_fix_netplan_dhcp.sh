@@ -76,65 +76,51 @@ for VMID in "${VMIDS[@]}"; do
     fi
 
     # 1. Backup
-    echo -e "${YELLOW}[*]${NC} Haciendo backup de netplan..."
+    echo -e "${YELLOW}[*]${NC} Haciendo backup..."
     run_cmd "cp" "$NETPLAN_FILE" "${NETPLAN_FILE}.bak"
 
     # 2. Verificar si ya existe
-    echo -e "${YELLOW}[*]${NC} Verificando configuración actual..."
     if run_cmd "grep" "-q" "dhcp-identifier" "$NETPLAN_FILE"; then
         echo -e "${YELLOW}[!]${NC} dhcp-identifier ya existe, omitiendo"
         continue
     fi
 
-    # 3. Escribir nuevo netplan con template
-    echo -e "${YELLOW}[*]${NC} Escribiendo nueva configuración..."
+    # 3. Escribir netplan línea por línea
+    echo -e "${YELLOW}[*]${NC} Escribiendo configuración..."
     
-    WRITE_CMD="cat > $NETPLAN_FILE << 'EOF'
-network:
-  version: 2
-  ethernets:
-    ens18:
-      dhcp4: true
-      dhcp-identifier: mac
-EOF"
+    run_cmd "sh" "-c" "echo 'network:' > $NETPLAN_FILE"
+    run_cmd "sh" "-c" "echo '  version: 2' >> $NETPLAN_FILE"
+    run_cmd "sh" "-c" "echo '  ethernets:' >> $NETPLAN_FILE"
+    run_cmd "sh" "-c" "echo '    ens18:' >> $NETPLAN_FILE"
+    run_cmd "sh" "-c" "echo '      dhcp4: true' >> $NETPLAN_FILE"
+    run_cmd "sh" "-c" "echo '      dhcp-identifier: mac' >> $NETPLAN_FILE"
     
-    if run_cmd "sh" "-c" "$WRITE_CMD"; then
-        echo -e "${GREEN}[✓]${NC} Netplan actualizado"
-    else
-        echo -e "${RED}[✗]${NC} Error al escribir netplan"
-        continue
-    fi
+    echo -e "${GREEN}[✓]${NC} Configuración escrita"
 
     # 4. Aplicar netplan
     echo -e "${YELLOW}[*]${NC} Aplicando netplan..."
     if run_cmd "netplan" "apply"; then
         echo -e "${GREEN}[✓]${NC} Netplan aplicado"
     else
-        echo -e "${RED}[✗]${NC} Error al aplicar netplan, restaurando backup..."
+        echo -e "${RED}[✗]${NC} Error, restaurando backup..."
         run_cmd "cp" "${NETPLAN_FILE}.bak" "$NETPLAN_FILE"
         continue
     fi
 
     # 5. Reiniciar interfaz
-    echo -e "${YELLOW}[*]${NC} Reiniciando interfaz ens18..."
+    echo -e "${YELLOW}[*]${NC} Reiniciando ens18..."
     run_cmd "sh" "-c" "ip link set ens18 down && sleep 2 && ip link set ens18 up"
 
     sleep 5
 
     # 6. Mostrar IP
-    echo -e "${YELLOW}[*]${NC} Obteniendo IP actual..."
     NEW_IPS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/network-get-interfaces --output-format json 2>/dev/null | grep -oP '"ip-address":"\K[0-9.]+' | grep -v "127.0.0.1" | grep -v "^172.17" || echo "")
     
     if [ -n "$NEW_IPS" ]; then
-        echo -e "${GREEN}[✓]${NC} IPs detectadas:"
-        echo "$NEW_IPS" | while read ip; do
-            echo "  - $ip"
-        done
-    else
-        echo -e "${YELLOW}[?]${NC} No se detectaron IPs"
+        echo -e "${GREEN}[✓]${NC} IPs: $NEW_IPS"
     fi
 done
 
 echo -e "\n=========================================="
-echo "Proceso completado"
+echo "Completado"
 echo "=========================================="
