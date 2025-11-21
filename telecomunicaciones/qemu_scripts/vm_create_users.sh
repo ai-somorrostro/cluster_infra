@@ -73,21 +73,24 @@ for VMID in "${VMIDS[@]}"; do
         continue
     fi
     
-    # Habilitar autenticación por password en SSH
+    # Backup SSH config
+    echo -n "Backup SSH config... "
+    run_cmd "cp" "/etc/ssh/sshd_config" "/etc/ssh/sshd_config.bak" && echo -e "${GREEN}[OK]${NC}" || echo -e "${YELLOW}[WARN]${NC}"
+    
+    # Habilitar password SSH (método agresivo)
     echo -n "Habilitando password SSH... "
-    if run_cmd "sh" "-c" "sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config"; then
+    if run_cmd "sh" "-c" "sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && sed -i 's/^#*KbdInteractiveAuthentication.*/KbdInteractiveAuthentication yes/' /etc/ssh/sshd_config && grep -q '^PasswordAuthentication' /etc/ssh/sshd_config || echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config"; then
         echo -e "${GREEN}[OK]${NC}"
     else
         echo -e "${YELLOW}[WARN]${NC}"
     fi
     
-    # Reiniciar SSH
+    # Reiniciar SSH (ambos nombres por si acaso)
     echo -n "Reiniciando SSH... "
-    if run_cmd "systemctl" "restart" "ssh"; then
-        echo -e "${GREEN}[OK]${NC}"
-    else
-        echo -e "${YELLOW}[WARN]${NC}"
-    fi
+    run_cmd "systemctl" "restart" "sshd" >/dev/null 2>&1 || true
+    run_cmd "systemctl" "restart" "ssh" >/dev/null 2>&1 || true
+    sleep 2
+    echo -e "${GREEN}[OK]${NC}"
     
     # Verificar si docker existe
     echo -n "Verificando docker... "
@@ -153,7 +156,7 @@ for VMID in "${VMIDS[@]}"; do
         if [ $DOCKER_EXISTS -eq 1 ]; then
             echo -n "  • Grupo docker... "
             if run_cmd "usermod" "-aG" "docker" "$username"; then
-                echo -e "${GREEN}[OK]${NC}"
+                echo -e "${GREEN}[✓]${NC}"
             else
                 echo -e "${YELLOW}[WARN]${NC}"
             fi
