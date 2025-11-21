@@ -26,7 +26,56 @@ echo "VMID: $VMID"
 echo "Paquetes: $PACKAGES"
 echo "=========================================="
 
-# Verificar que la VM existe y está corriendo
+# --- Funciones Helper ---
+
+# Función para esperar finalización de PID
+wait_for_pid() {
+    local pid=$1
+    local timeout=$2
+    local count=0
+    
+    while [ $count -lt $timeout ]; do
+        sleep 1
+        local status=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $pid --output-format json 2>/dev/null || echo "")
+        if echo "$status" | grep -q '"exited"'; then
+            echo "$status"
+            return 0
+        fi
+        echo -n "."
+        count=$((count+1))
+    done
+    echo ""
+    return 1
+}
+
+# Ejecutar comando simple y esperar (sin output check)
+run_cmd() {
+    local cmd_arr=("$@")
+    # Construir argumentos --command
+    local pvesh_args=""
+    for arg in "${cmd_arr[@]}"; do
+        # Escapar comillas dobles dentro del argumento si existen
+        local escaped_arg=$(echo "$arg" | sed 's/"/\\"/g')
+        pvesh_args="$pvesh_args --command \"$escaped_arg\""
+    done
+    
+    # Ejecutar con eval para procesar las comillas correctamente
+    local out=$(eval pvesh create /nodes/$NODE/qemu/$VMID/agent/exec $pvesh_args --output-format json 2>/dev/null)
+    local pid=$(echo "$out" | grep -oP '"pid":\K[0-9]+')
+    
+    if [ -z "$pid" ]; then
+        return 1
+    fi
+    
+    # Esperar (timeout 120s por defecto para dar tiempo a apt)
+    local res=$(wait_for_pid $pid 120)
+    local exitcode=$(echo "$res" | grep -oP '"exitcode":\K[0-9]+' || echo "1")
+    return $exitcode
+}
+
+# --- Inicio Script ---
+
+# Verificar VM
 echo -e "\n${YELLOW}[*]${NC} Verificando VM..."
 VM_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/status/current --output-format json 2>/dev/null)
 
@@ -40,123 +89,68 @@ if [ "$STATUS" != "running" ]; then
     echo -e "${RED}[✗]${NC} VM $VMID no está corriendo (status: $STATUS)"
     exit 1
 fi
-
 echo -e "${GREEN}[✓]${NC} VM corriendo"
 
-# Verificar qemu-guest-agent está habilitado
+# Verificar Agent
 echo -e "${YELLOW}[*]${NC} Verificando qemu-guest-agent..."
 AGENT_ENABLED=$(echo "$VM_STATUS" | grep -oP '"agent":\K[0-9]+' || echo "0")
-
 if [ "$AGENT_ENABLED" == "0" ]; then
     echo -e "${RED}[✗]${NC} qemu-guest-agent no está habilitado"
     exit 1
 fi
-
 echo -e "${GREEN}[✓]${NC} qemu-guest-agent activo"
 
-# Función para leer archivo de log de la VM
-read_vm_file() {
-    local vmid=$1
-    local file=$2
-    local cat_out=$(pvesh create /nodes/$NODE/qemu/$vmid/agent/exec --command "cat" --command "$file" --output-format json 2>/dev/null)
-    local pid=$(echo "$cat_out" | grep -oP '"pid":\K[0-9]+')
-    if [ -n "$pid" ]; then
-        sleep 1
-        pvesh get /nodes/$NODE/qemu/$vmid/agent/exec-status --pid $pid --output-format json 2>/dev/null | grep -oP '"out-data":"\K.*"' | sed 's/\\n/\n/g' | sed 's/\\t/\t/g' | sed 's/\\r//g' | sed 's/^"//' | sed 's/"$//'
-    fi
-}
-
-# Liberar locks de apt (INTENTO BRUTO DE ARREGLO)
-echo -e "${YELLOW}[*]${NC} Liberando posibles locks de apt..."
-KILL_CMD="killall apt apt-get 2>/dev/null || true; rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock* /var/lib/dpkg/lock-frontend"
-# Ejecutamos sin esperar mucho resultado
-pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "sh" --command "-c" --command "$KILL_CMD" >/dev/null 2>&1
-sleep 2
-# Reconfigurar dpkg por si acaso
-pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "dpkg" --command "--configure" --command "-a" >/dev/null 2>&1
-sleep 2
-
-# Actualizar cache de apt
-echo -e "\n${YELLOW}[*]${NC} Actualizando cache de apt..."
-# Redirigimos salida a archivo temporal para debug
-UPDATE_CMD="apt-get update > /tmp/apt_update.log 2>&1"
-UPDATE_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "sh" --command "-c" --command "$UPDATE_CMD" --output-format json 2>/dev/null)
-UPDATE_PID=$(echo "$UPDATE_OUTPUT" | grep -oP '"pid":\K[0-9]+')
-
-if [ -z "$UPDATE_PID" ]; then
-    echo -e "${RED}[✗]${NC} Error al ejecutar apt update"
-    exit 1
+# 1. Corrección preventiva: Comentar CDROM en sources.list
+echo -e "\n${YELLOW}[*]${NC} Aplicando correcciones preventivas (sources.list)..."
+# Usamos sed para comentar líneas que empiezan por 'deb cdrom'
+FIX_CMD="sed -i '/^deb cdrom/s/^/#/' /etc/apt/sources.list"
+if run_cmd "sh" "-c" "$FIX_CMD"; then
+    echo -e "${GREEN}[✓]${NC} Sources.list corregido (CDROM desactivado)"
+else
+    echo -e "${YELLOW}[!]${NC} No se pudo modificar sources.list (o no era necesario)"
 fi
 
-# Esperar y verificar el resultado
-for i in {1..45}; do
-    sleep 1
-    EXEC_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $UPDATE_PID --output-format json 2>/dev/null || echo "")
-    if echo "$EXEC_STATUS" | grep -q '"exited"'; then
-        break
-    fi
-    echo -n "."
-done
-echo ""
+# 2. Verificar conectividad
+echo -e "${YELLOW}[*]${NC} Verificando conectividad a internet..."
+if run_cmd "ping" "-c" "1" "8.8.8.8"; then
+    echo -e "${GREEN}[✓]${NC} Internet OK"
+else
+    echo -e "${RED}[✗]${NC} La VM no tiene internet. 'apt update' fallará."
+    # Intentamos continuar por si es un problema de ping pero apt funciona (proxy?), pero avisamos
+fi
 
-EXIT_CODE=$(echo "$EXEC_STATUS" | grep -oP '"exitcode":\K[0-9]+' || echo "1")
-if [ "$EXIT_CODE" == "0" ]; then
+# 3. Limpiar locks (por si acaso)
+echo -e "${YELLOW}[*]${NC} Limpiando locks anteriores..."
+CLEAN_CMD="rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock* /var/lib/dpkg/lock-frontend"
+run_cmd "sh" "-c" "$CLEAN_CMD"
+run_cmd "dpkg" "--configure" "-a"
+
+# 4. Actualizar apt
+echo -e "\n${YELLOW}[*]${NC} Actualizando cache de apt..."
+if run_cmd "apt-get" "update"; then
     echo -e "${GREEN}[✓]${NC} Cache actualizado"
 else
-    echo -e "${RED}[✗]${NC} Error al actualizar cache (exit code: $EXIT_CODE)"
-    echo -e "${YELLOW}--- Output del error ---${NC}"
-    read_vm_file $VMID "/tmp/apt_update.log"
-    echo -e "${YELLOW}------------------------${NC}"
+    echo -e "${RED}[✗]${NC} Error en apt update"
     exit 1
 fi
 
-# Instalar paquetes
+# 5. Instalar
 echo -e "\n${YELLOW}[*]${NC} Instalando paquetes..."
-# Construir el comando de instalación complejo
-INSTALL_CMD="DEBIAN_FRONTEND=noninteractive apt-get install -y $PACKAGES > /tmp/apt_install.log 2>&1"
-INSTALL_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "sh" --command "-c" --command "$INSTALL_CMD" --output-format json 2>/dev/null)
-INSTALL_PID=$(echo "$INSTALL_OUTPUT" | grep -oP '"pid":\K[0-9]+')
-
-if [ -z "$INSTALL_PID" ]; then
-    echo -e "${RED}[✗]${NC} Error al ejecutar apt install"
-    exit 1
-fi
-
-# Esperar y verificar el resultado
-for i in {1..120}; do
-    sleep 1
-    EXEC_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $INSTALL_PID --output-format json 2>/dev/null || echo "")
-    if echo "$EXEC_STATUS" | grep -q '"exited"'; then
-        break
-    fi
-    echo -n "."
-done
-echo ""
-
-EXIT_CODE=$(echo "$EXEC_STATUS" | grep -oP '"exitcode":\K[0-9]+' || echo "1")
-if [ "$EXIT_CODE" == "0" ]; then
+INSTALL_CMD="DEBIAN_FRONTEND=noninteractive apt-get install -y $PACKAGES"
+if run_cmd "sh" "-c" "$INSTALL_CMD"; then
     echo -e "${GREEN}[✓]${NC} Instalación completada"
 else
-    echo -e "${RED}[✗]${NC} Error al instalar (exit code: $EXIT_CODE)"
-    echo -e "${YELLOW}--- Output del error ---${NC}"
-    read_vm_file $VMID "/tmp/apt_install.log"
-    echo -e "${YELLOW}------------------------${NC}"
+    echo -e "${RED}[✗]${NC} Error en apt install"
     exit 1
 fi
 
-# Verificar cada paquete
+# 6. Verificar
 echo -e "\n${YELLOW}[*]${NC} Verificando instalación..."
 for PKG in $PACKAGES; do
-    CHECK_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "dpkg" --command "-l" --command "$PKG" --output-format json 2>/dev/null)
-    CHECK_PID=$(echo "$CHECK_OUTPUT" | grep -oP '"pid":\K[0-9]+')
-    sleep 2
-    
-    DPKG_OUTPUT=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $CHECK_PID --output-format json 2>/dev/null || echo "")
-    if echo "$DPKG_OUTPUT" | grep -q "^ii"; then
-        VERSION=$(echo "$DPKG_OUTPUT" | grep "^ii" | awk '{print $3}')
-        echo -e "${GREEN}[✓]${NC} $PKG ($VERSION)"
+    if run_cmd "dpkg" "-l" "$PKG"; then
+         echo -e "${GREEN}[✓]${NC} $PKG instalado correctamente"
     else
-        echo -e "${RED}[✗]${NC} $PKG (no instalado)"
+         echo -e "${RED}[✗]${NC} $PKG no parece estar instalado"
     fi
 done
 
