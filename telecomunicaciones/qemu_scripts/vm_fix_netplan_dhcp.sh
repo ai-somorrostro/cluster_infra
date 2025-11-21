@@ -19,6 +19,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+NETPLAN_FILE="/etc/netplan/50-cloud-init.yaml"
+
 echo "=========================================="
 echo "Nodo: $NODE"
 echo "VMs: ${VMIDS[*]}"
@@ -75,15 +77,30 @@ for VMID in "${VMIDS[@]}"; do
 
     # 1. Backup del archivo netplan original
     echo -e "${YELLOW}[*]${NC} Haciendo backup de netplan..."
-    BACKUP_CMD="cp /etc/netplan/00-installer-config.yaml /etc/netplan/00-installer-config.yaml.bak 2>/dev/null || cp /etc/netplan/*.yaml /etc/netplan/backup.yaml 2>/dev/null || true"
-    run_cmd "sh" "-c" "$BACKUP_CMD"
+    BACKUP_CMD="cp $NETPLAN_FILE ${NETPLAN_FILE}.bak"
+    if run_cmd "sh" "-c" "$BACKUP_CMD"; then
+        echo -e "${GREEN}[✓]${NC} Backup creado"
+    else
+        echo -e "${YELLOW}[!]${NC} No se pudo crear backup (puede que no exista el archivo)"
+    fi
 
     # 2. Agregar dhcp-identifier: mac si no existe
     echo -e "${YELLOW}[*]${NC} Modificando netplan para usar MAC como identificador DHCP..."
     
-    # Script sed para añadir dhcp-identifier: mac después de dhcp4: true
-    # Solo lo añade si no existe ya
-    FIX_CMD="sed -i '/dhcp4: true/!b; n; /dhcp-identifier/b; i\      dhcp-identifier: mac' /etc/netplan/00-installer-config.yaml"
+    # Verificar si ya existe dhcp-identifier
+    CHECK_CMD="grep -q 'dhcp-identifier' $NETPLAN_FILE && echo 'exists' || echo 'not_exists'"
+    CHECK_OUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "sh" --command "-c" --command "$CHECK_CMD" --output-format json 2>/dev/null)
+    CHECK_PID=$(echo "$CHECK_OUT" | grep -oP '"pid":\K[0-9]+')
+    sleep 2
+    CHECK_RES=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $CHECK_PID --output-format json 2>/dev/null || echo "")
+    
+    if echo "$CHECK_RES" | grep -q "exists"; then
+        echo -e "${YELLOW}[!]${NC} dhcp-identifier ya existe, omitiendo"
+        continue
+    fi
+    
+    # Añadir dhcp-identifier: mac después de dhcp4: true
+    FIX_CMD="sed -i '/dhcp4: true/a\      dhcp-identifier: mac' $NETPLAN_FILE"
     
     if run_cmd "sh" "-c" "$FIX_CMD"; then
         echo -e "${GREEN}[✓]${NC} Netplan modificado"
@@ -92,10 +109,10 @@ for VMID in "${VMIDS[@]}"; do
         continue
     fi
 
-    # 3. Verificar el cambio (opcional, para debug)
+    # 3. Verificar el cambio
     echo -e "${YELLOW}[*]${NC} Verificando cambios..."
-    CHECK_CMD="grep -A2 'dhcp4: true' /etc/netplan/00-installer-config.yaml"
-    run_cmd "sh" "-c" "$CHECK_CMD"
+    VERIFY_CMD="grep -A2 'dhcp4: true' $NETPLAN_FILE"
+    run_cmd "sh" "-c" "$VERIFY_CMD"
 
     # 4. Aplicar netplan
     echo -e "${YELLOW}[*]${NC} Aplicando netplan..."
@@ -103,7 +120,7 @@ for VMID in "${VMIDS[@]}"; do
         echo -e "${GREEN}[✓]${NC} Netplan aplicado correctamente"
     else
         echo -e "${RED}[✗]${NC} Error al aplicar netplan"
-        echo -e "${YELLOW}[!]${NC} Puedes restaurar backup: cp /etc/netplan/00-installer-config.yaml.bak /etc/netplan/00-installer-config.yaml"
+        echo -e "${YELLOW}[!]${NC} Puedes restaurar backup: cp ${NETPLAN_FILE}.bak $NETPLAN_FILE"
         continue
     fi
 
@@ -138,4 +155,3 @@ echo "Proceso completado"
 echo "Ahora cada VM usará su MAC como identificador DHCP"
 echo "Las VMs futuras clonadas de esta obtendrán IPs únicas"
 echo "=========================================="
-
