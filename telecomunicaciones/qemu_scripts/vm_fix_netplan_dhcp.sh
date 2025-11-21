@@ -92,19 +92,49 @@ for VMID in "${VMIDS[@]}"; do
     
     echo -e "${GREEN}[✓]${NC} dhcp-identifier no existe, procediendo a agregarlo"
 
-    # 3. Agregar dhcp-identifier: mac usando Python (método que funciona)
-    echo -e "${YELLOW}[*]${NC} Modificando netplan con Python..."
+    # 3. Crear script Python temporal para modificar netplan
+    echo -e "${YELLOW}[*]${NC} Creando script Python temporal..."
     
-    PYTHON_CMD="from pathlib import Path; p=Path('$NETPLAN_FILE'); t=p.read_text(); t=t.replace('      dhcp4: true\\\\n', '      dhcp4: true\\\\n      dhcp-identifier: mac\\\\n', 1); p.write_text(t)"
+    PYTHON_SCRIPT="
+import sys
+with open('$NETPLAN_FILE', 'r') as f:
+    lines = f.readlines()
+new_lines = []
+for line in lines:
+    new_lines.append(line)
+    if 'dhcp4: true' in line and 'dhcp-identifier' not in ''.join(lines):
+        indent = len(line) - len(line.lstrip())
+        new_lines.append(' ' * indent + 'dhcp-identifier: mac' + chr(10))
+with open('$NETPLAN_FILE', 'w') as f:
+    f.writelines(new_lines)
+"
     
-    if run_cmd "python3" "-c" "$PYTHON_CMD"; then
-        echo -e "${GREEN}[✓]${NC} Netplan modificado"
+    # Escribir script a archivo temporal
+    WRITE_SCRIPT_CMD="cat > /tmp/fix_netplan.py << 'EOFPYTHON'
+$PYTHON_SCRIPT
+EOFPYTHON"
+    
+    if run_cmd "sh" "-c" "$WRITE_SCRIPT_CMD"; then
+        echo -e "${GREEN}[✓]${NC} Script creado"
     else
-        echo -e "${RED}[✗]${NC} Error al modificar netplan"
+        echo -e "${RED}[✗]${NC} Error al crear script"
         continue
     fi
 
-    # 4. Validar sintaxis antes de aplicar
+    # 4. Ejecutar script Python
+    echo -e "${YELLOW}[*]${NC} Modificando netplan..."
+    if run_cmd "python3" "/tmp/fix_netplan.py"; then
+        echo -e "${GREEN}[✓]${NC} Netplan modificado"
+    else
+        echo -e "${RED}[✗]${NC} Error al modificar netplan"
+        run_cmd "rm" "-f" "/tmp/fix_netplan.py"
+        continue
+    fi
+    
+    # Limpiar script temporal
+    run_cmd "rm" "-f" "/tmp/fix_netplan.py"
+
+    # 5. Validar sintaxis antes de aplicar
     echo -e "${YELLOW}[*]${NC} Validando sintaxis YAML..."
     if run_cmd "netplan" "generate"; then
         echo -e "${GREEN}[✓]${NC} Sintaxis válida"
@@ -114,7 +144,7 @@ for VMID in "${VMIDS[@]}"; do
         continue
     fi
 
-    # 5. Aplicar netplan
+    # 6. Aplicar netplan
     echo -e "${YELLOW}[*]${NC} Aplicando netplan..."
     if run_cmd "netplan" "apply"; then
         echo -e "${GREEN}[✓]${NC} Netplan aplicado correctamente"
@@ -125,7 +155,7 @@ for VMID in "${VMIDS[@]}"; do
         continue
     fi
 
-    # 6. Reiniciar interfaz para forzar renovación de IP
+    # 7. Reiniciar interfaz para forzar renovación de IP
     echo -e "${YELLOW}[*]${NC} Reiniciando interfaz ens18..."
     RESTART_CMD="ip link set ens18 down && sleep 2 && ip link set ens18 up"
     if run_cmd "sh" "-c" "$RESTART_CMD"; then
@@ -137,7 +167,7 @@ for VMID in "${VMIDS[@]}"; do
     # Esperar a que obtenga IP
     sleep 5
 
-    # 7. Mostrar nueva IP
+    # 8. Mostrar nueva IP
     echo -e "${YELLOW}[*]${NC} Obteniendo IP actual..."
     NEW_IPS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/network-get-interfaces --output-format json 2>/dev/null | grep -oP '"ip-address":"\K[0-9.]+' | grep -v "127.0.0.1" | grep -v "^172.17" || echo "")
     
