@@ -84,7 +84,7 @@ for VMID in "${VMIDS[@]}"; do
         echo -e "${YELLOW}[!]${NC} No se pudo crear backup"
     fi
 
-    # 2. Verificar si dhcp-identifier ya existe (exit code 0 = existe, 1 = no existe)
+    # 2. Verificar si dhcp-identifier ya existe
     echo -e "${YELLOW}[*]${NC} Verificando configuración actual..."
     if run_cmd "grep" "-q" "dhcp-identifier" "$NETPLAN_FILE"; then
         echo -e "${YELLOW}[!]${NC} dhcp-identifier ya existe en netplan, omitiendo"
@@ -93,9 +93,14 @@ for VMID in "${VMIDS[@]}"; do
     
     echo -e "${GREEN}[✓]${NC} dhcp-identifier no existe, procediendo a agregarlo"
 
-    # 3. Agregar dhcp-identifier: mac después de dhcp4: true
+    # 3. Agregar dhcp-identifier: mac con la indentación correcta (detectando espacios de dhcp4)
     echo -e "${YELLOW}[*]${NC} Modificando netplan..."
-    FIX_CMD="sed -i '/dhcp4: true/a\      dhcp-identifier: mac' $NETPLAN_FILE"
+    
+    # Este comando sed:
+    # - Detecta la línea con "dhcp4: true"
+    # - Captura los espacios antes de "dhcp4" 
+    # - Añade la siguiente línea con la misma indentación
+    FIX_CMD="sed -i '/^\([[:space:]]*\)dhcp4: true/a\\\1dhcp-identifier: mac' $NETPLAN_FILE"
     
     if run_cmd "sh" "-c" "$FIX_CMD"; then
         echo -e "${GREEN}[✓]${NC} Netplan modificado"
@@ -104,21 +109,32 @@ for VMID in "${VMIDS[@]}"; do
         continue
     fi
 
-    # 4. Verificar el cambio
-    echo -e "${YELLOW}[*]${NC} Verificando cambios en netplan..."
-    run_cmd "cat" "$NETPLAN_FILE"
+    # 4. Validar sintaxis antes de aplicar
+    echo -e "${YELLOW}[*]${NC} Validando sintaxis YAML..."
+    if run_cmd "netplan" "generate"; then
+        echo -e "${GREEN}[✓]${NC} Sintaxis válida"
+    else
+        echo -e "${RED}[✗]${NC} Error de sintaxis YAML, restaurando backup..."
+        run_cmd "cp" "${NETPLAN_FILE}.bak" "$NETPLAN_FILE"
+        continue
+    fi
 
-    # 5. Aplicar netplan
+    # 5. Mostrar cambios
+    echo -e "${YELLOW}[*]${NC} Cambios aplicados en netplan:"
+    run_cmd "grep" "-A1" "dhcp4: true" "$NETPLAN_FILE"
+
+    # 6. Aplicar netplan
     echo -e "\n${YELLOW}[*]${NC} Aplicando netplan..."
     if run_cmd "netplan" "apply"; then
         echo -e "${GREEN}[✓]${NC} Netplan aplicado correctamente"
     else
         echo -e "${RED}[✗]${NC} Error al aplicar netplan"
-        echo -e "${YELLOW}[!]${NC} Restaurar backup: cp ${NETPLAN_FILE}.bak $NETPLAN_FILE"
+        echo -e "${YELLOW}[!]${NC} Restaurando backup..."
+        run_cmd "cp" "${NETPLAN_FILE}.bak" "$NETPLAN_FILE"
         continue
     fi
 
-    # 6. Reiniciar interfaz para forzar renovación de IP
+    # 7. Reiniciar interfaz para forzar renovación de IP
     echo -e "${YELLOW}[*]${NC} Reiniciando interfaz ens18..."
     RESTART_CMD="ip link set ens18 down && sleep 2 && ip link set ens18 up"
     if run_cmd "sh" "-c" "$RESTART_CMD"; then
@@ -130,7 +146,7 @@ for VMID in "${VMIDS[@]}"; do
     # Esperar a que obtenga IP
     sleep 5
 
-    # 7. Mostrar nueva IP
+    # 8. Mostrar nueva IP
     echo -e "${YELLOW}[*]${NC} Obteniendo IP actual..."
     NEW_IPS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/network-get-interfaces --output-format json 2>/dev/null | grep -oP '"ip-address":"\K[0-9.]+' | grep -v "127.0.0.1" | grep -v "^172.17" || echo "")
     
