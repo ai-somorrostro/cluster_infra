@@ -24,16 +24,32 @@ for VMID in "${VMIDS[@]}"; do
     
     # Backup
     echo -n "Backup... "
-    pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "cp" --command "$NETPLAN_FILE" --command "${NETPLAN_FILE}.bak" >/dev/null 2>&1
+    pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "cp" --command "$NETPLAN_FILE" --command "${NETPLAN_FILE}.bak" >/dev/null 2>&1 || true
     echo -e "${GREEN}OK${NC}"
     
-    # Modificar con Python
-    echo -n "Modificando netplan... "
-    pvesh create /nodes/$NODE/qemu/$VMID/agent/exec \
-      --command "python3" \
-      --command "-c" \
-      --command "from pathlib import Path; p=Path('/etc/netplan/50-cloud-init.yaml'); t=p.read_text(); t=t.replace('      dhcp4: true\n', '      dhcp4: true\n      dhcp-identifier: mac\n', 1); p.write_text(t)" \
-      >/dev/null 2>&1
+    # Verificar si el fichero tiene dhcp4
+    echo -n "Verificando fichero... "
+    CHECK=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "grep" --command "-c" --command "dhcp4" --command "$NETPLAN_FILE" --output-format json 2>/dev/null | grep -oP '"pid":\K[0-9]+')
+    sleep 1
+    HAS_DHCP4=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $CHECK --output-format json 2>/dev/null | grep -oP '"exitcode":\K[0-9]+')
+    
+    if [ "$HAS_DHCP4" != "0" ]; then
+        # Fichero vacío o sin dhcp4, escribir plantilla completa
+        echo "vacío, escribiendo plantilla... "
+        pvesh create /nodes/$NODE/qemu/$VMID/agent/exec \
+          --command "python3" \
+          --command "-c" \
+          --command "from pathlib import Path; Path('/etc/netplan/50-cloud-init.yaml').write_text('network:\n  version: 2\n  ethernets:\n    ens18:\n      dhcp4: true\n      dhcp-identifier: mac\n')" \
+          >/dev/null 2>&1
+    else
+        # Fichero con dhcp4, añadir dhcp-identifier
+        echo "modificando... "
+        pvesh create /nodes/$NODE/qemu/$VMID/agent/exec \
+          --command "python3" \
+          --command "-c" \
+          --command "from pathlib import Path; p=Path('/etc/netplan/50-cloud-init.yaml'); t=p.read_text(); t=t.replace('      dhcp4: true\n', '      dhcp4: true\n      dhcp-identifier: mac\n', 1); p.write_text(t)" \
+          >/dev/null 2>&1
+    fi
     echo -e "${GREEN}OK${NC}"
     
     sleep 2
