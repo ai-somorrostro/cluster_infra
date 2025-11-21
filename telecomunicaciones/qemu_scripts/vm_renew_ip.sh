@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# vm_renew_ip.sh - Fuerza renovación de IP en VMs clonadas
+# vm_renew_ip.sh - Renueva IP DHCP en interfaz ens18
 
 set -e
 
@@ -19,12 +19,15 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+INTERFACE="ens18"
+
 echo "=========================================="
 echo "Nodo: $NODE"
 echo "VMs: ${VMIDS[*]}"
+echo "Interfaz: $INTERFACE"
 echo "=========================================="
 
-# --- Funciones Helper (reutilizadas del anterior) ---
+# --- Funciones Helper ---
 wait_for_pid() {
     local pid=$1
     local timeout=$2
@@ -72,37 +75,45 @@ for VMID in "${VMIDS[@]}"; do
         continue
     fi
 
-    # 1. Regenerar Machine ID (crítico para clones)
-    echo -e "${YELLOW}[*]${NC} Regenerando Machine ID..."
-    REGEN_CMD="rm -f /etc/machine-id /var/lib/dbus/machine-id && dbus-uuidgen --ensure && systemd-machine-id-setup"
-    run_cmd "sh" "-c" "$REGEN_CMD"
-
-    # 2. Limpiar leases DHCP antiguos
-    echo -e "${YELLOW}[*]${NC} Limpiando leases DHCP..."
-    CLEAN_CMD="rm -f /var/lib/dhcp/*"
-    run_cmd "sh" "-c" "$CLEAN_CMD"
-
-    # 3. Reiniciar Networking para pedir nueva IP
-    echo -e "${YELLOW}[*]${NC} Solicitando nueva IP..."
-    # Intentamos netplan apply primero (Ubuntu moderno), fallback a ifdown/up
-    if run_cmd "netplan" "apply"; then
-        echo -e "${GREEN}[✓]${NC} Netplan aplicado"
+    # 1. Liberar IP actual
+    echo -e "${YELLOW}[*]${NC} Liberando IP en $INTERFACE..."
+    if run_cmd "dhclient" "-r" "$INTERFACE"; then
+        echo -e "${GREEN}[✓]${NC} IP liberada"
     else
-        # Fallback genérico
-        run_cmd "systemctl" "restart" "systemd-networkd"
+        echo -e "${YELLOW}[!]${NC} No se pudo liberar IP (puede ser normal)"
     fi
     
-    # Esperar un poco
-    sleep 5
+    sleep 2
 
-    # 4. Mostrar nueva IP
-    echo -e "${YELLOW}[*]${NC} Obteniendo IP actual..."
-    IPS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/network-get-interfaces --output-format json 2>/dev/null | grep -oP '"ip-address":"\K[0-9.]+' | grep -v "127.0.0.1")
-    
-    if [ -n "$IPS" ]; then
-        echo -e "${GREEN}[✓]${NC} Nuevas IPs: $IPS"
+    # 2. Solicitar nueva IP
+    echo -e "${YELLOW}[*]${NC} Solicitando nueva IP en $INTERFACE..."
+    if run_cmd "dhclient" "-v" "$INTERFACE"; then
+        echo -e "${GREEN}[✓]${NC} Nueva IP asignada"
     else
-        echo -e "${RED}[?]${NC} No se detectaron IPs (puede tardar unos segundos)"
+        echo -e "${RED}[✗]${NC} Error al solicitar IP"
+        continue
+    fi
+    
+    sleep 3
+
+    # 3. Mostrar nueva IP
+    echo -e "${YELLOW}[*]${NC} Obteniendo IP actual de $INTERFACE..."
+    GET_IP_CMD="ip -4 addr show $INTERFACE | grep inet | awk '{print \$2}' | cut -d/ -f1"
+    
+    # Ejecutar y capturar (intentamos leer el exec-status)
+    OUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "sh" --command "-c" --command "$GET_IP_CMD" --output-format json 2>/dev/null)
+    PID=$(echo "$OUT" | grep -oP '"pid":\K[0-9]+')
+    
+    if [ -n "$PID" ]; then
+        sleep 2
+        IP_DATA=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $PID --output-format json 2>/dev/null || echo "")
+        NEW_IP=$(echo "$IP_DATA" | grep -oP '"out-data":"[^"]*\\n' | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+        
+        if [ -n "$NEW_IP" ]; then
+            echo -e "${GREEN}[✓]${NC} Nueva IP: $NEW_IP"
+        else
+            echo -e "${YELLOW}[?]${NC} No se pudo determinar la IP"
+        fi
     fi
 done
 
