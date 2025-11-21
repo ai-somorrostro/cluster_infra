@@ -56,7 +56,7 @@ echo -e "${GREEN}[✓]${NC} qemu-guest-agent activo"
 
 # Actualizar cache de apt
 echo -e "\n${YELLOW}[*]${NC} Actualizando cache de apt..."
-UPDATE_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command='["sh","-c","sudo apt update 2>&1"]' 2>/dev/null)
+UPDATE_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command='["apt","update"]' 2>/dev/null)
 UPDATE_PID=$(echo "$UPDATE_OUTPUT" | grep -oP '"pid":\K[0-9]+')
 
 if [ -z "$UPDATE_PID" ]; then
@@ -65,13 +65,15 @@ if [ -z "$UPDATE_PID" ]; then
 fi
 
 # Esperar y verificar el resultado
-for i in {1..10}; do
+for i in {1..15}; do
     sleep 1
     EXEC_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid=$UPDATE_PID 2>/dev/null || echo "")
-    if echo "$EXEC_STATUS" | grep -q "exited"; then
+    if echo "$EXEC_STATUS" | grep -q '"exited"'; then
         break
     fi
+    echo -n "."
 done
+echo ""
 
 EXIT_CODE=$(echo "$EXEC_STATUS" | grep -oP '"exitcode":\K[0-9]+' || echo "1")
 if [ "$EXIT_CODE" == "0" ]; then
@@ -83,7 +85,7 @@ fi
 
 # Instalar paquetes
 echo -e "\n${YELLOW}[*]${NC} Instalando paquetes..."
-CMD="sudo DEBIAN_FRONTEND=noninteractive apt install -y $PACKAGES 2>&1"
+CMD="DEBIAN_FRONTEND=noninteractive apt install -y $PACKAGES"
 INSTALL_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command="[\"sh\",\"-c\",\"$CMD\"]" 2>/dev/null)
 INSTALL_PID=$(echo "$INSTALL_OUTPUT" | grep -oP '"pid":\K[0-9]+')
 
@@ -93,13 +95,15 @@ if [ -z "$INSTALL_PID" ]; then
 fi
 
 # Esperar y verificar el resultado
-for i in {1..20}; do
+for i in {1..30}; do
     sleep 1
     EXEC_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid=$INSTALL_PID 2>/dev/null || echo "")
-    if echo "$EXEC_STATUS" | grep -q "exited"; then
+    if echo "$EXEC_STATUS" | grep -q '"exited"'; then
         break
     fi
+    echo -n "."
 done
+echo ""
 
 EXIT_CODE=$(echo "$EXEC_STATUS" | grep -oP '"exitcode":\K[0-9]+' || echo "1")
 if [ "$EXIT_CODE" == "0" ]; then
