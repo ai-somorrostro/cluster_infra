@@ -93,14 +93,11 @@ for VMID in "${VMIDS[@]}"; do
     
     echo -e "${GREEN}[✓]${NC} dhcp-identifier no existe, procediendo a agregarlo"
 
-    # 3. Agregar dhcp-identifier: mac con la indentación correcta (detectando espacios de dhcp4)
+    # 3. Agregar dhcp-identifier: mac usando awk (más robusto)
     echo -e "${YELLOW}[*]${NC} Modificando netplan..."
     
-    # Este comando sed:
-    # - Detecta la línea con "dhcp4: true"
-    # - Captura los espacios antes de "dhcp4" 
-    # - Añade la siguiente línea con la misma indentación
-    FIX_CMD="sed -i '/^\([[:space:]]*\)dhcp4: true/a\\\1dhcp-identifier: mac' $NETPLAN_FILE"
+    # Usar awk para detectar indentación y añadir línea correctamente
+    FIX_CMD="awk '/dhcp4: true/ { print; match(\$0, /^[[:space:]]*/); spaces=substr(\$0, 1, RLENGTH); print spaces \"dhcp-identifier: mac\"; next } {print}' $NETPLAN_FILE > ${NETPLAN_FILE}.tmp && mv ${NETPLAN_FILE}.tmp $NETPLAN_FILE"
     
     if run_cmd "sh" "-c" "$FIX_CMD"; then
         echo -e "${GREEN}[✓]${NC} Netplan modificado"
@@ -120,7 +117,7 @@ for VMID in "${VMIDS[@]}"; do
     fi
 
     # 5. Mostrar cambios
-    echo -e "${YELLOW}[*]${NC} Cambios aplicados en netplan:"
+    echo -e "${YELLOW}[*]${NC} Cambios aplicados:"
     run_cmd "grep" "-A1" "dhcp4: true" "$NETPLAN_FILE"
 
     # 6. Aplicar netplan
