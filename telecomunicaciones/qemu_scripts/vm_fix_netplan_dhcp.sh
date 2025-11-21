@@ -77,8 +77,7 @@ for VMID in "${VMIDS[@]}"; do
 
     # 1. Backup del archivo netplan original
     echo -e "${YELLOW}[*]${NC} Haciendo backup de netplan..."
-    BACKUP_CMD="cp $NETPLAN_FILE ${NETPLAN_FILE}.bak"
-    if run_cmd "sh" "-c" "$BACKUP_CMD"; then
+    if run_cmd "cp" "$NETPLAN_FILE" "${NETPLAN_FILE}.bak"; then
         echo -e "${GREEN}[✓]${NC} Backup creado"
     else
         echo -e "${YELLOW}[!]${NC} No se pudo crear backup"
@@ -93,13 +92,12 @@ for VMID in "${VMIDS[@]}"; do
     
     echo -e "${GREEN}[✓]${NC} dhcp-identifier no existe, procediendo a agregarlo"
 
-    # 3. Agregar dhcp-identifier: mac usando awk (más robusto)
-    echo -e "${YELLOW}[*]${NC} Modificando netplan..."
+    # 3. Agregar dhcp-identifier: mac usando Python (método que funciona)
+    echo -e "${YELLOW}[*]${NC} Modificando netplan con Python..."
     
-    # Usar awk para detectar indentación y añadir línea correctamente
-    FIX_CMD="awk '/dhcp4: true/ { print; match(\$0, /^[[:space:]]*/); spaces=substr(\$0, 1, RLENGTH); print spaces \"dhcp-identifier: mac\"; next } {print}' $NETPLAN_FILE > ${NETPLAN_FILE}.tmp && mv ${NETPLAN_FILE}.tmp $NETPLAN_FILE"
+    PYTHON_CMD="from pathlib import Path; p=Path('$NETPLAN_FILE'); t=p.read_text(); t=t.replace('      dhcp4: true\\\\n', '      dhcp4: true\\\\n      dhcp-identifier: mac\\\\n', 1); p.write_text(t)"
     
-    if run_cmd "sh" "-c" "$FIX_CMD"; then
+    if run_cmd "python3" "-c" "$PYTHON_CMD"; then
         echo -e "${GREEN}[✓]${NC} Netplan modificado"
     else
         echo -e "${RED}[✗]${NC} Error al modificar netplan"
@@ -116,12 +114,8 @@ for VMID in "${VMIDS[@]}"; do
         continue
     fi
 
-    # 5. Mostrar cambios
-    echo -e "${YELLOW}[*]${NC} Cambios aplicados:"
-    run_cmd "grep" "-A1" "dhcp4: true" "$NETPLAN_FILE"
-
-    # 6. Aplicar netplan
-    echo -e "\n${YELLOW}[*]${NC} Aplicando netplan..."
+    # 5. Aplicar netplan
+    echo -e "${YELLOW}[*]${NC} Aplicando netplan..."
     if run_cmd "netplan" "apply"; then
         echo -e "${GREEN}[✓]${NC} Netplan aplicado correctamente"
     else
@@ -131,7 +125,7 @@ for VMID in "${VMIDS[@]}"; do
         continue
     fi
 
-    # 7. Reiniciar interfaz para forzar renovación de IP
+    # 6. Reiniciar interfaz para forzar renovación de IP
     echo -e "${YELLOW}[*]${NC} Reiniciando interfaz ens18..."
     RESTART_CMD="ip link set ens18 down && sleep 2 && ip link set ens18 up"
     if run_cmd "sh" "-c" "$RESTART_CMD"; then
@@ -143,7 +137,7 @@ for VMID in "${VMIDS[@]}"; do
     # Esperar a que obtenga IP
     sleep 5
 
-    # 8. Mostrar nueva IP
+    # 7. Mostrar nueva IP
     echo -e "${YELLOW}[*]${NC} Obteniendo IP actual..."
     NEW_IPS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/network-get-interfaces --output-format json 2>/dev/null | grep -oP '"ip-address":"\K[0-9.]+' | grep -v "127.0.0.1" | grep -v "^172.17" || echo "")
     
