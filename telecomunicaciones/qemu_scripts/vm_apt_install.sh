@@ -6,7 +6,7 @@ set -e
 
 if [ $# -lt 3 ]; then
     echo "Uso: $0 <nodo> <vmid> <paquete1> [paquete2] [paquete3] ..."
-    echo "Ejemplo: $0 pve 100 vim curl htop"
+    echo "Ejemplo: $0 pve-node-3 100 vim curl htop"
     exit 1
 fi
 
@@ -28,7 +28,7 @@ echo "=========================================="
 
 # Verificar que la VM existe y está corriendo
 echo -e "\n${YELLOW}[*]${NC} Verificando VM..."
-VM_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/status/current --output-format=json 2>/dev/null)
+VM_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/status/current --output-format json 2>/dev/null)
 
 if [ -z "$VM_STATUS" ]; then
     echo -e "${RED}[✗]${NC} VM $VMID no existe en nodo $NODE"
@@ -56,7 +56,7 @@ echo -e "${GREEN}[✓]${NC} qemu-guest-agent activo"
 
 # Actualizar cache de apt
 echo -e "\n${YELLOW}[*]${NC} Actualizando cache de apt..."
-UPDATE_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command='["apt","update"]' 2>/dev/null)
+UPDATE_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command '["apt","update"]' --output-format json 2>/dev/null)
 UPDATE_PID=$(echo "$UPDATE_OUTPUT" | grep -oP '"pid":\K[0-9]+')
 
 if [ -z "$UPDATE_PID" ]; then
@@ -67,7 +67,7 @@ fi
 # Esperar y verificar el resultado
 for i in {1..15}; do
     sleep 1
-    EXEC_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid=$UPDATE_PID 2>/dev/null || echo "")
+    EXEC_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $UPDATE_PID --output-format json 2>/dev/null || echo "")
     if echo "$EXEC_STATUS" | grep -q '"exited"'; then
         break
     fi
@@ -86,7 +86,7 @@ fi
 # Instalar paquetes
 echo -e "\n${YELLOW}[*]${NC} Instalando paquetes..."
 CMD="DEBIAN_FRONTEND=noninteractive apt install -y $PACKAGES"
-INSTALL_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command="[\"sh\",\"-c\",\"$CMD\"]" 2>/dev/null)
+INSTALL_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "[\"sh\",\"-c\",\"$CMD\"]" --output-format json 2>/dev/null)
 INSTALL_PID=$(echo "$INSTALL_OUTPUT" | grep -oP '"pid":\K[0-9]+')
 
 if [ -z "$INSTALL_PID" ]; then
@@ -97,7 +97,7 @@ fi
 # Esperar y verificar el resultado
 for i in {1..30}; do
     sleep 1
-    EXEC_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid=$INSTALL_PID 2>/dev/null || echo "")
+    EXEC_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $INSTALL_PID --output-format json 2>/dev/null || echo "")
     if echo "$EXEC_STATUS" | grep -q '"exited"'; then
         break
     fi
@@ -116,11 +116,11 @@ fi
 # Verificar cada paquete
 echo -e "\n${YELLOW}[*]${NC} Verificando instalación..."
 for PKG in $PACKAGES; do
-    CHECK_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command="[\"dpkg\",\"-l\",\"$PKG\"]" 2>/dev/null)
+    CHECK_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "[\"dpkg\",\"-l\",\"$PKG\"]" --output-format json 2>/dev/null)
     CHECK_PID=$(echo "$CHECK_OUTPUT" | grep -oP '"pid":\K[0-9]+')
     sleep 2
     
-    DPKG_OUTPUT=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid=$CHECK_PID 2>/dev/null || echo "")
+    DPKG_OUTPUT=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $CHECK_PID --output-format json 2>/dev/null || echo "")
     if echo "$DPKG_OUTPUT" | grep -q "^ii"; then
         VERSION=$(echo "$DPKG_OUTPUT" | grep "^ii" | awk '{print $3}')
         echo -e "${GREEN}[✓]${NC} $PKG ($VERSION)"
