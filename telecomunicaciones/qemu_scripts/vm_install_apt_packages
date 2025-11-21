@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# vm_install_apt_packages - Instala paquetes apt en VMs usando qemu-guest-agent
+# vm_install_apt_packages - Instala paquetes apt en VMs usando qemu-guest-agent via pvesh
 
 set -e
 
@@ -23,28 +23,33 @@ NC='\033[0m'
 # Convertir paquetes separados por comas a espacios
 PACKAGES=$(echo "$PACKAGES" | tr ',' ' ')
 
+# Obtener el nombre del nodo actual
+NODE=$(hostname)
+
 echo "=========================================="
 echo "Instalando paquetes: $PACKAGES"
 echo "En ${#VMIDS[@]} VMs..."
+echo "Nodo: $NODE"
 echo "=========================================="
 
 for VMID in "${VMIDS[@]}"; do
     echo -e "\n${YELLOW}[*]${NC} Procesando VM: $VMID"
     
     # Verificar que la VM existe y está corriendo
-    if ! qm status $VMID >/dev/null 2>&1; then
+    STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/status/current --output-format=json 2>/dev/null | grep -oP '"status":"\K[^"]+' || echo "error")
+    
+    if [ "$STATUS" == "error" ]; then
         echo -e "${RED}[✗]${NC} VM $VMID no existe"
         continue
     fi
     
-    STATUS=$(qm status $VMID | awk '{print $2}')
     if [ "$STATUS" != "running" ]; then
         echo -e "${RED}[✗]${NC} VM $VMID no está corriendo (status: $STATUS)"
         continue
     fi
     
     # Verificar que qemu-guest-agent está disponible
-    if ! qm guest cmd $VMID ping >/dev/null 2>&1; then
+    if ! pvesh get /nodes/$NODE/qemu/$VMID/agent/ping >/dev/null 2>&1; then
         echo -e "${RED}[✗]${NC} qemu-guest-agent no responde en VM $VMID"
         continue
     fi
@@ -53,8 +58,17 @@ for VMID in "${VMIDS[@]}"; do
     
     # Actualizar cache de apt
     echo -e "${YELLOW}[*]${NC} Actualizando cache de apt..."
-    if qm guest exec $VMID -- apt update >/dev/null 2>&1; then
-        echo -e "${GREEN}[✓]${NC} Cache actualizado"
+    UPDATE_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command='["apt","update"]' 2>/dev/null)
+    UPDATE_PID=$(echo "$UPDATE_OUTPUT" | grep -oP '"pid":\K[0-9]+')
+    
+    if [ -n "$UPDATE_PID" ]; then
+        sleep 3
+        if pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid=$UPDATE_PID >/dev/null 2>&1; then
+            echo -e "${GREEN}[✓]${NC} Cache actualizado"
+        else
+            echo -e "${RED}[✗]${NC} Error al actualizar cache"
+            continue
+        fi
     else
         echo -e "${RED}[✗]${NC} Error al actualizar cache"
         continue
@@ -62,13 +76,24 @@ for VMID in "${VMIDS[@]}"; do
     
     # Instalar paquetes
     echo -e "${YELLOW}[*]${NC} Instalando paquetes..."
-    if qm guest exec $VMID -- sh -c "DEBIAN_FRONTEND=noninteractive apt install -y $PACKAGES" >/dev/null 2>&1; then
+    
+    # Construir comando con DEBIAN_FRONTEND
+    CMD="DEBIAN_FRONTEND=noninteractive apt install -y $PACKAGES"
+    INSTALL_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command="[\"sh\",\"-c\",\"$CMD\"]" 2>/dev/null)
+    INSTALL_PID=$(echo "$INSTALL_OUTPUT" | grep -oP '"pid":\K[0-9]+')
+    
+    if [ -n "$INSTALL_PID" ]; then
+        sleep 5
         echo -e "${GREEN}[✓]${NC} Paquetes instalados exitosamente"
         
         # Verificar cada paquete
         for PKG in $PACKAGES; do
-            if qm guest exec $VMID -- dpkg -l $PKG 2>/dev/null | grep -q "^ii"; then
-                VERSION=$(qm guest exec $VMID -- dpkg -l $PKG 2>/dev/null | grep ^ii | awk '{print $3}')
+            CHECK_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command="[\"dpkg\",\"-l\",\"$PKG\"]" 2>/dev/null)
+            CHECK_PID=$(echo "$CHECK_OUTPUT" | grep -oP '"pid":\K[0-9]+')
+            sleep 1
+            
+            if pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid=$CHECK_PID 2>/dev/null | grep -q "^ii"; then
+                VERSION=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid=$CHECK_PID 2>/dev/null | grep "^ii" | awk '{print $3}')
                 echo -e "  ${GREEN}✓${NC} $PKG ($VERSION)"
             else
                 echo -e "  ${YELLOW}!${NC} $PKG (no se pudo verificar)"
@@ -82,4 +107,3 @@ done
 echo -e "\n=========================================="
 echo "Proceso completado"
 echo "=========================================="
-
