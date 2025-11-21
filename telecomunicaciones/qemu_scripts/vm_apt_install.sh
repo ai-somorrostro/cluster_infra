@@ -66,6 +66,16 @@ read_vm_file() {
     fi
 }
 
+# Liberar locks de apt (INTENTO BRUTO DE ARREGLO)
+echo -e "${YELLOW}[*]${NC} Liberando posibles locks de apt..."
+KILL_CMD="killall apt apt-get 2>/dev/null || true; rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock* /var/lib/dpkg/lock-frontend"
+# Ejecutamos sin esperar mucho resultado
+pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "sh" --command "-c" --command "$KILL_CMD" >/dev/null 2>&1
+sleep 2
+# Reconfigurar dpkg por si acaso
+pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "dpkg" --command "--configure" --command "-a" >/dev/null 2>&1
+sleep 2
+
 # Actualizar cache de apt
 echo -e "\n${YELLOW}[*]${NC} Actualizando cache de apt..."
 # Redirigimos salida a archivo temporal para debug
@@ -79,7 +89,7 @@ if [ -z "$UPDATE_PID" ]; then
 fi
 
 # Esperar y verificar el resultado
-for i in {1..30}; do
+for i in {1..45}; do
     sleep 1
     EXEC_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $UPDATE_PID --output-format json 2>/dev/null || echo "")
     if echo "$EXEC_STATUS" | grep -q '"exited"'; then
@@ -113,7 +123,7 @@ if [ -z "$INSTALL_PID" ]; then
 fi
 
 # Esperar y verificar el resultado
-for i in {1..120}; do # Aumentado tiempo de espera para instalación a 2 minutos
+for i in {1..120}; do
     sleep 1
     EXEC_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $INSTALL_PID --output-format json 2>/dev/null || echo "")
     if echo "$EXEC_STATUS" | grep -q '"exited"'; then
