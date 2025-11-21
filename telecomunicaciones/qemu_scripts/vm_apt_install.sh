@@ -28,13 +28,14 @@ echo "=========================================="
 
 # Verificar que la VM existe y está corriendo
 echo -e "\n${YELLOW}[*]${NC} Verificando VM..."
-STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/status/current --output-format=json 2>/dev/null | grep -oP '"status":"\K[^"]+' || echo "error")
+VM_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/status/current --output-format=json 2>/dev/null)
 
-if [ "$STATUS" == "error" ]; then
+if [ -z "$VM_STATUS" ]; then
     echo -e "${RED}[✗]${NC} VM $VMID no existe en nodo $NODE"
     exit 1
 fi
 
+STATUS=$(echo "$VM_STATUS" | grep -oP '"status":"\K[^"]+')
 if [ "$STATUS" != "running" ]; then
     echo -e "${RED}[✗]${NC} VM $VMID no está corriendo (status: $STATUS)"
     exit 1
@@ -42,10 +43,12 @@ fi
 
 echo -e "${GREEN}[✓]${NC} VM corriendo"
 
-# Verificar qemu-guest-agent
+# Verificar qemu-guest-agent está habilitado
 echo -e "${YELLOW}[*]${NC} Verificando qemu-guest-agent..."
-if ! pvesh get /nodes/$NODE/qemu/$VMID/agent/ping >/dev/null 2>&1; then
-    echo -e "${RED}[✗]${NC} qemu-guest-agent no responde"
+AGENT_ENABLED=$(echo "$VM_STATUS" | grep -oP '"agent":\K[0-9]+' || echo "0")
+
+if [ "$AGENT_ENABLED" == "0" ]; then
+    echo -e "${RED}[✗]${NC} qemu-guest-agent no está habilitado"
     exit 1
 fi
 
@@ -55,6 +58,11 @@ echo -e "${GREEN}[✓]${NC} qemu-guest-agent activo"
 echo -e "\n${YELLOW}[*]${NC} Actualizando cache de apt..."
 UPDATE_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command='["apt","update"]' 2>/dev/null)
 UPDATE_PID=$(echo "$UPDATE_OUTPUT" | grep -oP '"pid":\K[0-9]+')
+
+if [ -z "$UPDATE_PID" ]; then
+    echo -e "${RED}[✗]${NC} Error al ejecutar apt update"
+    exit 1
+fi
 
 sleep 3
 
@@ -70,6 +78,11 @@ echo -e "\n${YELLOW}[*]${NC} Instalando paquetes..."
 CMD="DEBIAN_FRONTEND=noninteractive apt install -y $PACKAGES"
 INSTALL_OUTPUT=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec -- command="[\"sh\",\"-c\",\"$CMD\"]" 2>/dev/null)
 INSTALL_PID=$(echo "$INSTALL_OUTPUT" | grep -oP '"pid":\K[0-9]+')
+
+if [ -z "$INSTALL_PID" ]; then
+    echo -e "${RED}[✗]${NC} Error al ejecutar apt install"
+    exit 1
+fi
 
 sleep 5
 
