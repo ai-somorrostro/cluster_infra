@@ -337,11 +337,21 @@ for VMID in "${VMIDS[@]}"; do
     
     echo -n "  • Expandiendo partición... "
     PART_NUM="${PARTITION#${MAIN_DEVICE}}"
-    run_cmd "sudo" "growpart" "/dev/${MAIN_DEVICE}" "$PART_NUM" >/dev/null 2>&1 || run_cmd "sudo" "sh" "-c" "parted /dev/${MAIN_DEVICE} resizepart ${PART_NUM} 100%" >/dev/null 2>&1
-    echo -e "${GREEN}[✓]${NC}"
-    
-    run_cmd "sudo" "partprobe" "/dev/${MAIN_DEVICE}" >/dev/null 2>&1 || true
-    sleep 2
+    # Intentar growpart primero con dry-run para ver si hace falta
+    if run_cmd "sudo" "growpart" "/dev/${MAIN_DEVICE}" "$PART_NUM" >/dev/null 2>&1; then
+        echo -e "${GREEN}[✓]${NC}"
+        # Forzar actualización de tabla de particiones después de growpart
+        sleep 1
+        run_cmd "sudo" "partprobe" "/dev/${MAIN_DEVICE}" >/dev/null 2>&1 || true
+        sleep 2
+    elif run_cmd "sudo" "sh" "-c" "parted /dev/${MAIN_DEVICE} resizepart ${PART_NUM} 100%" >/dev/null 2>&1; then
+        echo -e "${GREEN}[✓] (parted)${NC}"
+        sleep 1
+        run_cmd "sudo" "partprobe" "/dev/${MAIN_DEVICE}" >/dev/null 2>&1 || true
+        sleep 2
+    else
+        echo -e "${YELLOW}[!]${NC} (sin cambios)"
+    fi
     
     echo -n "  • Rescanning PV... "
     run_cmd "sudo" "pvresize" "/dev/$PV_NAME" >/dev/null 2>&1 || true
@@ -359,7 +369,9 @@ for VMID in "${VMIDS[@]}"; do
     
     if [ -n "$VG_NAME" ] && [ -n "$LV_NAME" ]; then
         echo -n "  • Expandiendo LV... "
-        if run_cmd "sudo" "lvextend" "-l" "+100%FREE" "$VG_NAME/$LV_NAME" >/dev/null 2>&1; then
+        # Capturar output de error para mostrarlo si falla
+        LV_OUT=$(get_cmd_output "sudo" "lvextend" "-l" "+100%FREE" "$VG_NAME/$LV_NAME" 2>&1)
+        if echo "$LV_OUT" | grep -q "successfully resized"; then
             echo -e "${GREEN}[✓]${NC}"
             
             echo -n "  • Redimensionando FS... "
@@ -367,6 +379,8 @@ for VMID in "${VMIDS[@]}"; do
             echo -e "${GREEN}[✓]${NC}"
         else
             echo -e "${RED}[✗]${NC} Falló lvextend"
+            # Mostrar las primeras líneas del error para depurar
+            echo -e "${RED}    Error: $(echo "$LV_OUT" | head -1)${NC}"
         fi
     else
         echo -e "${RED}[✗]${NC} Faltan datos VG/LV"
