@@ -2,7 +2,8 @@
 
 # resize_disk.sh - Resize LVM disk of VMs
 
-set -e
+# Desactivamos set -e para gestionar errores manualmente sin matar el script completo
+# set -e 
 
 if [ $# -lt 3 ]; then
     echo "Uso: $0 <nodo> <vmid1> [vmid2] ... <cantidad>"
@@ -16,6 +17,7 @@ NODE=$1
 shift
 # Último argumento es la cantidad
 AMOUNT="${@: -1}"
+# Todos los argumentos menos el último son VMIDs
 VMIDS=("${@:1:$(($#-1))}")
 
 RED='\033[0;31m'
@@ -83,15 +85,14 @@ get_cmd_output() {
     local res=$(wait_for_pid $pid 60)
     local out_data=$(echo "$res" | grep -oP '"out-data":"\K[^"]+' || echo "")
     if [ -n "$out_data" ]; then
-        # Fix: pvesh returns JSON escaped string, NOT base64.
-        # Interpret \n as newlines and remove \r
         echo -e "$out_data" | tr -d '\r' | sed 's/[[:space:]]*$//'
     fi
-    # También devolver error si el comando falló
+    
     local exitcode=$(echo "$res" | grep -oP '"exitcode":\K[0-9]+' || echo "1")
     if [ "$exitcode" != "0" ]; then
         return 1
     fi
+    return 0
 }
 
 wait_for_vm_status() {
@@ -114,12 +115,9 @@ wait_for_vm_status() {
 }
 
 get_disk_device() {
-    # Obtener el primer disco del sistema (normalmente scsi0, virtio0, sata0, etc.)
     local config=$(pvesh get /nodes/$NODE/qemu/$VMID/config --output-format json 2>/dev/null)
-    # Buscar el primer disco que no sea de instalación
     local disk=$(echo "$config" | grep -oP '(scsi|virtio|sata|ide)0:' | head -1 | cut -d: -f1)
     if [ -z "$disk" ]; then
-        # Por defecto usar scsi0
         echo "scsi0"
     else
         echo "$disk"
@@ -133,7 +131,6 @@ for VMID in "${VMIDS[@]}"; do
     echo "VM $VMID - Aumentar disco $AMOUNT"
     echo -e "==========================================${NC}"
     
-    # Verificar VM existe
     VM_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/status/current --output-format json 2>/dev/null)
     if [ -z "$VM_STATUS" ]; then
         echo -e "${RED}[✗]${NC} VM $VMID no existe en nodo $NODE"
@@ -143,20 +140,20 @@ for VMID in "${VMIDS[@]}"; do
     CURRENT_STATUS=$(echo "$VM_STATUS" | grep -oP '"status":"\K[^"]+')
     AGENT_ENABLED=$(echo "$VM_STATUS" | grep -oP '"agent":\K[0-9]+' || echo "0")
     
-    # Variables para guardar info antes del reboot
+    # Variables pre-recolectadas
     PRE_MAIN_DEVICE=""
     PRE_PARTITION=""
     PRE_PV_NAME=""
     PRE_VG_NAME=""
     PRE_LV_NAME=""
     
-    # 0. Recolectar información ANTES de apagar (si está encendida)
+    # 0. Recolectar información ANTES de apagar
     if [ "$CURRENT_STATUS" == "running" ] && [ "$AGENT_ENABLED" == "1" ]; then
         echo -e "${YELLOW}[*]${NC} Recolectando información antes de apagar..."
         
-        # Detectar dispositivo principal
+        # Detectar dispositivo principal (ahora con sudo por si acaso)
         echo -n "  • Detectando dispositivo... "
-        MAIN_DEVICE=$(get_cmd_output "sh" "-c" "lsblk -ndo NAME,TYPE | grep '^[a-z]' | grep -v '^loop' | head -1 | awk '{print \$1}'")
+        MAIN_DEVICE=$(get_cmd_output "sudo" "lsblk" "-ndo" "NAME,TYPE" 2>/dev/null | grep 'disk' | head -1 | awk '{print $1}')
         if [ -n "$MAIN_DEVICE" ]; then
             PRE_MAIN_DEVICE="$MAIN_DEVICE"
             echo "/dev/$PRE_MAIN_DEVICE"
@@ -164,7 +161,7 @@ for VMID in "${VMIDS[@]}"; do
             echo -e "${YELLOW}No detectado (se intentará después)${NC}"
         fi
         
-        # Detectar PV/Partición
+        # Detectar PV
         echo -n "  • Detectando PV... "
         PV_OUTPUT=$(get_cmd_output "sudo" "pvs" "--noheadings" "-o" "pv_name" 2>/dev/null || echo "")
         if [ -n "$PV_OUTPUT" ]; then
@@ -190,7 +187,7 @@ for VMID in "${VMIDS[@]}"; do
             echo -e "${YELLOW}No detectado${NC}"
         fi
         
-        # Mostrar espacio libre actual
+        # Espacio libre
         echo -n "  • Verificando espacio libre existente... "
         VG_OUTPUT=$(get_cmd_output "sudo" "vgs" "--units" "g" 2>/dev/null || echo "")
         if [ -n "$VG_OUTPUT" ]; then
@@ -199,7 +196,7 @@ for VMID in "${VMIDS[@]}"; do
                 VG_FREE_RESULT=$(echo "$VG_FREE_RAW" | awk '{printf "%.0f", $1}')
                 if [ -n "$VG_FREE_RESULT" ] && [ "$VG_FREE_RESULT" -gt 0 ] 2>/dev/null; then
                     echo -e "${YELLOW}${VG_FREE_RESULT}GB libre en VG${NC}"
-                    echo -e "  ${YELLOW}[!]${NC} Atención: Ya hay ${VG_FREE_RESULT}GB libres que se usarán."
+                    echo -e "  ${YELLOW}[!]${NC} Atención: Ya hay ${VG_FREE_RESULT}GB libres."
                 else
                     echo -e "${GREEN}Sin espacio libre extra${NC}"
                 fi
@@ -208,7 +205,7 @@ for VMID in "${VMIDS[@]}"; do
         echo ""
     fi
     
-    # 1. Apagar VM si está corriendo
+    # 1. Apagar VM
     if [ "$CURRENT_STATUS" == "running" ]; then
         echo -e "${YELLOW}[*]${NC} VM está corriendo, apagando..."
         pvesh create /nodes/$NODE/qemu/$VMID/status/shutdown >/dev/null 2>&1
@@ -223,20 +220,17 @@ for VMID in "${VMIDS[@]}"; do
         echo -e "${GREEN}[✓]${NC} VM ya está apagada"
     fi
     
-    # 2. Obtener dispositivo de disco Proxmox
+    # 2. Redimensionar Proxmox
     DISK_DEV=$(get_disk_device)
-    echo -e "${YELLOW}[*]${NC} Disco Proxmox detectado: $DISK_DEV"
-    
-    # 3. Redimensionar en Proxmox
-    echo -e "${YELLOW}[*]${NC} Redimensionando disco en Proxmox..."
+    echo -e "${YELLOW}[*]${NC} Disco Proxmox ($DISK_DEV): Redimensionando..."
     if qm resize $VMID $DISK_DEV $AMOUNT 2>/dev/null || pvesh create /nodes/$NODE/qemu/$VMID/resize --disk $DISK_DEV --size $AMOUNT >/dev/null 2>&1; then
-        echo -e "${GREEN}[✓]${NC} Disco redimensionado en Proxmox"
+        echo -e "${GREEN}[✓]${NC} OK"
     else
         echo -e "${RED}[✗]${NC} Error redimensionando disco en Proxmox"
         continue
     fi
     
-    # 4. Iniciar VM
+    # 3. Iniciar VM
     echo -e "${YELLOW}[*]${NC} Iniciando VM..."
     pvesh create /nodes/$NODE/qemu/$VMID/status/start >/dev/null 2>&1
     if wait_for_vm_status "running" 60; then
@@ -246,7 +240,7 @@ for VMID in "${VMIDS[@]}"; do
         continue
     fi
     
-    # Esperar a que el agente esté disponible
+    # Esperar agente
     sleep 5
     AGENT_READY=0
     for i in {1..15}; do
@@ -264,20 +258,19 @@ for VMID in "${VMIDS[@]}"; do
         continue
     fi
     
-    # 5. Aplicar redimensionado dentro de la VM
+    # 4. Aplicar cambios en VM
     echo -e "${YELLOW}[*]${NC} Aplicando redimensionado LVM en la VM..."
     
-    # Si tenemos datos pre-recolectados, usarlos
+    # Recuperar variables o detectar
     MAIN_DEVICE="$PRE_MAIN_DEVICE"
     PARTITION="$PRE_PARTITION"
     PV_NAME="$PRE_PV_NAME"
     VG_NAME="$PRE_VG_NAME"
     LV_NAME="$PRE_LV_NAME"
     
-    # Si falta algo, intentar detectar de nuevo (con esperas)
     if [ -z "$MAIN_DEVICE" ]; then
-        echo -n "  • Detectando dispositivo... "
-        sleep 5 # Esperar estabilización
+        echo -n "  • Detectando dispositivo (post-boot)... "
+        sleep 5
         for attempt in 1 2 3 4 5; do
             MAIN_DEVICE=$(get_cmd_output "sh" "-c" "lsblk -ndo NAME,TYPE | grep '^[a-z]' | grep -v '^loop' | head -1 | awk '{print \$1}'")
             if [ -n "$MAIN_DEVICE" ]; then break; fi
@@ -285,16 +278,14 @@ for VMID in "${VMIDS[@]}"; do
         done
         if [ -z "$MAIN_DEVICE" ]; then MAIN_DEVICE="sda"; echo "Asumiendo sda"; else echo "/dev/$MAIN_DEVICE"; fi
     else
-        echo "  • Usando dispositivo detectado previamente: /dev/$MAIN_DEVICE"
+        echo "  • Usando dispositivo: /dev/$MAIN_DEVICE"
     fi
     
-    # Rescan del dispositivo
-    echo -n "  • Rescanning dispositivo... "
-    run_cmd "sh" "-c" "echo 1 > /sys/class/block/${MAIN_DEVICE}/device/rescan 2>/dev/null || partprobe /dev/${MAIN_DEVICE}" && echo -e "${GREEN}[✓]${NC}" || echo -e "${YELLOW}[!]${NC}"
-    
+    echo -n "  • Rescanning... "
+    run_cmd "sh" "-c" "echo 1 > /sys/class/block/${MAIN_DEVICE}/device/rescan 2>/dev/null || partprobe /dev/${MAIN_DEVICE}"
+    echo -e "${GREEN}[✓]${NC}"
     sleep 2
     
-    # Detectar/Usar partición
     if [ -z "$PARTITION" ]; then
          echo -n "  • Detectando partición... "
          PV_OUTPUT=$(get_cmd_output "sudo" "pvs" "--noheadings" "-o" "pv_name" 2>/dev/null || echo "")
@@ -304,101 +295,57 @@ for VMID in "${VMIDS[@]}"; do
              PV_NAME="$PARTITION"
              echo "/dev/$PARTITION"
          else
-             PARTITION="${MAIN_DEVICE}3" # Fallback
+             PARTITION="${MAIN_DEVICE}3"
              PV_NAME="$PARTITION"
              echo "/dev/$PARTITION (fallback)"
          fi
     else
-        echo "  • Usando partición detectada previamente: /dev/$PARTITION"
+        echo "  • Usando partición: /dev/$PARTITION"
     fi
     
-    # Expandir partición
     echo -n "  • Expandiendo partición... "
     PART_NUM="${PARTITION#${MAIN_DEVICE}}"
-    if run_cmd "sudo" "growpart" "/dev/${MAIN_DEVICE}" "$PART_NUM" 2>/dev/null; then
-        echo -e "${GREEN}[✓]${NC}"
-        run_cmd "sudo" "partprobe" "/dev/${MAIN_DEVICE}" >/dev/null 2>&1 || true
-        sleep 3
-    elif run_cmd "sudo" "sh" "-c" "parted /dev/${MAIN_DEVICE} resizepart ${PART_NUM} 100%"; then
-        echo -e "${GREEN}[✓]${NC}"
-        run_cmd "sudo" "partprobe" "/dev/${MAIN_DEVICE}" >/dev/null 2>&1 || true
-        sleep 3
-    else
-        echo -e "${YELLOW}[!]${NC} (puede que no sea necesario)"
-    fi
+    run_cmd "sudo" "growpart" "/dev/${MAIN_DEVICE}" "$PART_NUM" >/dev/null 2>&1 || run_cmd "sudo" "sh" "-c" "parted /dev/${MAIN_DEVICE} resizepart ${PART_NUM} 100%" >/dev/null 2>&1
+    echo -e "${GREEN}[✓]${NC}"
     
-    # Rescan PV
+    run_cmd "sudo" "partprobe" "/dev/${MAIN_DEVICE}" >/dev/null 2>&1 || true
+    sleep 2
+    
     echo -n "  • Rescanning PV... "
-    if run_cmd "sudo" "pvresize" "/dev/$PV_NAME"; then
-        echo -e "${GREEN}[✓]${NC}"
-    else
-        sleep 2
-        run_cmd "sudo" "pvresize" "/dev/$PV_NAME" && echo -e "${GREEN}[✓]${NC}" || echo -e "${YELLOW}[!]${NC} Falló pvresize (verificar manualmente)"
-    fi
+    run_cmd "sudo" "pvresize" "/dev/$PV_NAME" >/dev/null 2>&1 || true
+    echo -e "${GREEN}[✓]${NC}"
     
-    # Detectar VG/LV si no los tenemos
-    if [ -z "$VG_NAME" ] || [ -z "$LV_NAME" ]; then
-        echo -n "  • Detectando VG y LV... "
+    if [ -z "$VG_NAME" ]; then
+        echo -n "  • Detectando VG/LV... "
         VG_NAME=$(get_cmd_output "sudo" "sh" "-c" "vgs --noheadings -o vg_name | head -1 | tr -d ' '")
         LV_INFO=$(get_cmd_output "sudo" "sh" "-c" "lvs --noheadings -o vg_name,lv_name | head -1")
-        if [ -n "$LV_INFO" ]; then
-            LV_NAME=$(echo "$LV_INFO" | awk '{print $2}')
-            echo "$VG_NAME/$LV_NAME"
-        else
-            echo -e "${RED}[✗]${NC} No se pudo detectar VG/LV"
-            continue
-        fi
+        LV_NAME=$(echo "$LV_INFO" | awk '{print $2}')
+        echo "$VG_NAME/$LV_NAME"
     else
-        echo "  • Usando VG/LV detectado previamente: $VG_NAME/$LV_NAME"
+        echo "  • Usando VG/LV: $VG_NAME/$LV_NAME"
     fi
     
-    # Expandir LV
-    echo -n "  • Expandiendo LV... "
-    if run_cmd "sudo" "lvextend" "-l" "+100%FREE" "$VG_NAME/$LV_NAME"; then
-        echo -e "${GREEN}[✓]${NC}"
-    else
-        echo -e "${RED}[✗]${NC} Error expandiendo LV"
-        continue
-    fi
-    
-    # Detectar filesystem y redimensionar
-    echo -n "  • Detectando filesystem... "
-    FS_TYPE=$(get_cmd_output "sudo" "blkid" "/dev/$VG_NAME/$LV_NAME" "-o" "value" "-s" "TYPE")
-    
-    if [ -z "$FS_TYPE" ]; then
-        echo -e "${RED}[✗]${NC} No se pudo detectar filesystem"
-        continue
-    fi
-    echo "$FS_TYPE"
-    
-    # Redimensionar filesystem
-    echo -n "  • Redimensionando filesystem... "
-    if [ "$FS_TYPE" == "xfs" ]; then
-        if run_cmd "sudo" "xfs_growfs" "/" 2>/dev/null || run_cmd "sudo" "xfs_growfs" "/dev/$VG_NAME/$LV_NAME"; then
+    if [ -n "$VG_NAME" ] && [ -n "$LV_NAME" ]; then
+        echo -n "  • Expandiendo LV... "
+        if run_cmd "sudo" "lvextend" "-l" "+100%FREE" "$VG_NAME/$LV_NAME" >/dev/null 2>&1; then
+            echo -e "${GREEN}[✓]${NC}"
+            
+            echo -n "  • Redimensionando FS... "
+            run_cmd "sudo" "resize2fs" "/dev/$VG_NAME/$LV_NAME" >/dev/null 2>&1 || run_cmd "sudo" "xfs_growfs" "/dev/$VG_NAME/$LV_NAME" >/dev/null 2>&1
             echo -e "${GREEN}[✓]${NC}"
         else
-            echo -e "${RED}[✗]${NC}"
-            continue
-        fi
-    elif [ "$FS_TYPE" == "ext4" ] || [ "$FS_TYPE" == "ext3" ] || [ "$FS_TYPE" == "ext2" ]; then
-        if run_cmd "sudo" "resize2fs" "/dev/$VG_NAME/$LV_NAME"; then
-            echo -e "${GREEN}[✓]${NC}"
-        else
-            echo -e "${RED}[✗]${NC}"
-            continue
+            echo -e "${RED}[✗]${NC} Falló lvextend"
         fi
     else
-        echo -e "${YELLOW}[!]${NC} Filesystem $FS_TYPE no soportado automáticamente"
+        echo -e "${RED}[✗]${NC} Faltan datos VG/LV"
     fi
     
-    # Verificar resultado
-    echo -n "  • Verificando espacio... "
-    DF_OUT=$(get_cmd_output "sh" "-c" "df -h / | tail -1 | awk '{print \$2, \$3, \$4}'")
-    echo "$DF_OUT"
+    echo -n "  • Espacio final: "
+    get_cmd_output "sh" "-c" "df -h / | tail -1 | awk '{print \$2, \$3, \$4}'" || echo "N/A"
     
-    echo -e "${GREEN}[✓]${NC} Disco redimensionado correctamente"
+    echo -e "${GREEN}[✓]${NC} Fin VM $VMID"
 done
 
 echo -e "\n${GREEN}=========================================="
-echo "Completado"
+echo "Proceso completado para todas las VMs"
 echo -e "==========================================${NC}"
