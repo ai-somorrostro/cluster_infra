@@ -80,8 +80,9 @@ for VMID in "${VMIDS[@]}"; do
         local res=$(wait_for_pid $pid 30)
         local out_data=$(echo "$res" | grep -oP '"out-data":"\K[^"]+' || echo "")
         if [ -n "$out_data" ]; then
-            echo -n "$out_data" | base64 -d 2>/dev/null | head -20
-            echo ""
+            # Fix: pvesh returns JSON escaped string, NOT base64.
+            # We need to interpret \n as newlines.
+            echo -e "$out_data" | tr -d '\r'
         fi
     }
     

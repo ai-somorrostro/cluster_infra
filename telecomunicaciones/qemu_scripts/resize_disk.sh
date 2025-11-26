@@ -80,11 +80,17 @@ get_cmd_output() {
         return 1
     fi
     
-    local res=$(wait_for_pid $pid 30)
+    local res=$(wait_for_pid $pid 60)
     local out_data=$(echo "$res" | grep -oP '"out-data":"\K[^"]+' || echo "")
     if [ -n "$out_data" ]; then
-        # Decodificar y mantener saltos de línea, solo limpiar \r
-        echo -n "$out_data" | base64 -d 2>/dev/null | tr -d '\r' | sed 's/[[:space:]]*$//'
+        # Fix: pvesh returns JSON escaped string, NOT base64.
+        # Interpret \n as newlines and remove \r
+        echo -e "$out_data" | tr -d '\r' | sed 's/[[:space:]]*$//'
+    fi
+    # También devolver error si el comando falló
+    local exitcode=$(echo "$res" | grep -oP '"exitcode":\K[0-9]+' || echo "1")
+    if [ "$exitcode" != "0" ]; then
+        return 1
     fi
 }
 
@@ -223,9 +229,11 @@ for VMID in "${VMIDS[@]}"; do
     
     # Detectar dispositivo de bloque principal
     echo -n "  • Detectando dispositivo... "
-    MAIN_DEVICE=$(get_cmd_output "sh" "-c" "lsblk -ndo NAME,TYPE | grep disk | head -1 | awk '{print \$1}'")
-    if [ -z "$MAIN_DEVICE" ]; then
-        MAIN_DEVICE="sda"
+    MAIN_DEVICE=$(get_cmd_output "sh" "-c" "lsblk -ndo NAME,TYPE | grep '^[a-z]' | grep -v '^loop' | head -1 | awk '{print \$1}'")
+    if [ -z "$MAIN_DEVICE" ] || ! echo "$MAIN_DEVICE" | grep -qP '^[a-z]{2,3}[0-9]*$'; then
+        echo -e "${RED}[✗]${NC} No se pudo detectar el dispositivo de disco principal"
+        echo -e "${RED}[✗]${NC} Output recibido: '$MAIN_DEVICE'"
+        continue
     fi
     echo "/dev/$MAIN_DEVICE"
     
@@ -239,28 +247,38 @@ for VMID in "${VMIDS[@]}"; do
     
     sleep 2
     
-    # Detectar partición LVM o usar disco directamente
+    # Detectar partición LVM - buscar la partición que tiene el PV
     echo -n "  • Detectando partición LVM... "
-    # Primero intentar detectar qué partición tiene el PV
-    PV_DEVICE=$(get_cmd_output "sudo" "sh" "-c" "pvs --noheadings -o pv_name 2>/dev/null | head -1 | tr -d ' '" || echo "")
     
-    if [ -n "$PV_DEVICE" ]; then
-        # Encontramos el PV, usar ese dispositivo directamente
-        PARTITION="${PV_DEVICE#/dev/}"  # Quitar /dev/ si está presente
-        HAS_PARTITIONS=1
-        echo "/dev/$PARTITION (detectado desde PV)"
+    # PRIMERO: Obtener el PV directamente desde pvs (fuente de verdad)
+    PV_OUTPUT=$(get_cmd_output "sudo" "pvs" "--noheadings" "-o" "pv_name" 2>/dev/null || echo "")
+    if [ -n "$PV_OUTPUT" ]; then
+        PV_DEVICE_FULL=$(echo "$PV_OUTPUT" | head -1 | awk '{print $1}' | tr -d '[:space:]')
+        if [ -n "$PV_DEVICE_FULL" ] && echo "$PV_DEVICE_FULL" | grep -qP '^/dev/[a-z0-9]+$'; then
+            PARTITION="${PV_DEVICE_FULL#/dev/}"
+            HAS_PARTITIONS=1
+            echo "/dev/$PARTITION (detectado desde PV)"
+        else
+            echo -e "${RED}[✗]${NC} No se pudo parsear el dispositivo PV: '$PV_DEVICE_FULL'"
+            continue
+        fi
     else
-        # No encontramos PV, buscar la partición más grande (normalmente la LVM)
-        PARTITION=$(get_cmd_output "sh" "-c" "lsblk -ndo NAME,TYPE,SIZE /dev/${MAIN_DEVICE} | grep part | sort -k3 -h | tail -1 | awk '{print \$1}'")
-        HAS_PARTITIONS=1
-        
-        if [ -z "$PARTITION" ]; then
-            # No hay particiones, LVM directamente en el disco
+        # Si no hay PV, buscar la partición más grande
+        PARTITION_RAW=$(get_cmd_output "sh" "-c" "lsblk -ndo NAME,TYPE,SIZE /dev/${MAIN_DEVICE} 2>/dev/null | grep 'part' | sort -k3 -h | tail -1" || echo "")
+        if [ -n "$PARTITION_RAW" ]; then
+            PARTITION=$(echo "$PARTITION_RAW" | awk '{print $1}' | grep -oP '^[a-z0-9]+$' || echo "")
+            if [ -z "$PARTITION" ] || ! echo "$PARTITION" | grep -qP '^[a-z]{2,3}[0-9]+$'; then
+                echo -e "${RED}[✗]${NC} No se pudo detectar la partición LVM"
+                echo -e "${RED}[✗]${NC} Output recibido: '$PARTITION_RAW'"
+                continue
+            fi
+            HAS_PARTITIONS=1
+            echo "/dev/$PARTITION"
+        else
+            # Sin particiones, puede ser LVM directamente en el disco
             PARTITION="$MAIN_DEVICE"
             HAS_PARTITIONS=0
-            echo "LVM directamente en /dev/$MAIN_DEVICE (sin particiones)"
-        else
-            echo "/dev/$PARTITION (mayor partición)"
+            echo "/dev/$PARTITION (sin particiones)"
         fi
     fi
     
@@ -268,30 +286,73 @@ for VMID in "${VMIDS[@]}"; do
     if [ $HAS_PARTITIONS -eq 1 ]; then
         echo -n "  • Expandiendo partición... "
         PART_NUM="${PARTITION#${MAIN_DEVICE}}"
+        PART_EXPANDED=0
         if run_cmd "sudo" "growpart" "/dev/${MAIN_DEVICE}" "$PART_NUM" 2>/dev/null; then
             echo -e "${GREEN}[✓]${NC}"
+            PART_EXPANDED=1
         elif run_cmd "sudo" "sh" "-c" "parted /dev/${MAIN_DEVICE} resizepart ${PART_NUM} 100%"; then
             echo -e "${GREEN}[✓]${NC}"
+            PART_EXPANDED=1
         else
             echo -e "${YELLOW}[!]${NC} (puede que no sea necesario o ya expandida)"
         fi
-        sleep 2
+        
+        if [ $PART_EXPANDED -eq 1 ]; then
+            echo -n "  • Rescanning partición después de expandir... "
+            run_cmd "sudo" "partprobe" "/dev/${MAIN_DEVICE}" >/dev/null 2>&1 || true
+            sleep 3
+            echo -e "${GREEN}[✓]${NC}"
+        else
+            sleep 2
+        fi
+    fi
+    
+    # Obtener el nombre exacto del PV para pvresize
+    echo -n "  • Verificando PV... "
+    PV_OUTPUT=$(get_cmd_output "sudo" "pvs" "--noheadings" "-o" "pv_name" 2>/dev/null || echo "")
+    if [ -n "$PV_OUTPUT" ]; then
+        PV_NAME_FULL=$(echo "$PV_OUTPUT" | head -1 | awk '{print $1}' | tr -d '[:space:]')
+        if [ -z "$PV_NAME_FULL" ] || ! echo "$PV_NAME_FULL" | grep -qP '^/dev/[a-z0-9]+$'; then
+            echo -e "${RED}[✗]${NC} No se pudo obtener el nombre del PV: '$PV_NAME_FULL'"
+            continue
+        fi
+        PV_NAME="${PV_NAME_FULL#/dev/}"
+        echo "/dev/$PV_NAME"
+    else
+        echo -e "${RED}[✗]${NC} No se pudo obtener información del PV"
+        continue
+    fi
+    
+    # Verificar que el PV coincide con la partición detectada
+    if [ "/dev/$PV_NAME" != "/dev/$PARTITION" ]; then
+        echo -e "${YELLOW}[!]${NC} Advertencia: PV ($PV_NAME) != Partición detectada ($PARTITION)"
+        echo -e "${YELLOW}[!]${NC} Usando PV: /dev/$PV_NAME"
+        PARTITION="$PV_NAME"
     fi
     
     # Rescan PV
     echo -n "  • Rescanning PV... "
-    if run_cmd "sudo" "pvresize" "/dev/$PARTITION"; then
-        echo -e "${GREEN}[✓]${NC}"
-    else
-        echo -e "${YELLOW}[!]${NC} Intentando método alternativo..."
-        if [ $HAS_PARTITIONS -eq 1 ]; then
-            run_cmd "sudo" "partprobe" "/dev/$MAIN_DEVICE" || true
+    sleep 2
+    PV_RESIZED=0
+    for attempt in 1 2 3; do
+        if run_cmd "sudo" "pvresize" "/dev/$PV_NAME" 2>/dev/null; then
+            echo -e "${GREEN}[✓]${NC}"
+            PV_RESIZED=1
+            break
         fi
-        sleep 2
-        if ! run_cmd "sudo" "pvresize" "/dev/$PARTITION"; then
-            echo -e "${RED}[✗]${NC} Error en pvresize"
-            continue
+        if [ $attempt -lt 3 ]; then
+            echo -n "(intento $attempt falló, reintentando...) "
+            sleep 3
+            if [ $HAS_PARTITIONS -eq 1 ]; then
+                run_cmd "sudo" "partprobe" "/dev/$MAIN_DEVICE" >/dev/null 2>&1 || true
+                sleep 2
+            fi
         fi
+    done
+    
+    if [ $PV_RESIZED -eq 0 ]; then
+        echo -e "${RED}[✗]${NC} Error en pvresize de /dev/$PV_NAME después de 3 intentos"
+        echo -e "${YELLOW}[!]${NC} Continuando de todos modos (puede que el PV ya esté actualizado)"
     fi
     
     # Obtener VG y LV
