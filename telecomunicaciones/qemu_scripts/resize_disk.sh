@@ -227,10 +227,21 @@ for VMID in "${VMIDS[@]}"; do
     # 5. Aplicar redimensionado dentro de la VM
     echo -e "${YELLOW}[*]${NC} Aplicando redimensionado LVM en la VM..."
     
-    # Detectar dispositivo de bloque principal
+    # Esperar un poco más para asegurar que el SO está listo
+    sleep 5
+    
+    # Detectar dispositivo de bloque principal (con reintentos)
     echo -n "  • Detectando dispositivo... "
-    MAIN_DEVICE=$(get_cmd_output "sh" "-c" "lsblk -ndo NAME,TYPE | grep '^[a-z]' | grep -v '^loop' | head -1 | awk '{print \$1}'")
-    if [ -z "$MAIN_DEVICE" ] || ! echo "$MAIN_DEVICE" | grep -qP '^[a-z]{2,3}[0-9]*$'; then
+    MAIN_DEVICE=""
+    for attempt in 1 2 3 4 5; do
+        MAIN_DEVICE=$(get_cmd_output "sh" "-c" "lsblk -ndo NAME,TYPE | grep '^[a-z]' | grep -v '^loop' | head -1 | awk '{print \$1}'")
+        if [ -n "$MAIN_DEVICE" ] && echo "$MAIN_DEVICE" | grep -qP '^[a-z]{2,3}[0-9]*$'; then
+            break
+        fi
+        sleep 2
+    done
+    
+    if [ -z "$MAIN_DEVICE" ]; then
         echo -e "${RED}[✗]${NC} No se pudo detectar el dispositivo de disco principal"
         echo -e "${RED}[✗]${NC} Output recibido: '$MAIN_DEVICE'"
         continue
