@@ -44,51 +44,96 @@ for VMID in "${VMIDS[@]}"; do
     fi
     
     # Helper function to wait for command and get output
-    wait_and_get_output() {
-        local cmd_out=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec "$@" --output-format json 2>/dev/null)
-        local pid=$(echo "$cmd_out" | grep -oP '"pid":\K[0-9]+')
-        if [ -z "$pid" ]; then
-            echo "Failed to start command"
-            return 1
-        fi
-        
-        # Wait for command to finish
+    wait_for_pid() {
+        local pid=$1
+        local timeout=$2
         local count=0
-        while [ $count -lt 30 ]; do
+        while [ $count -lt $timeout ]; do
             sleep 1
             local status=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $pid --output-format json 2>/dev/null || echo "")
             if echo "$status" | grep -q '"exited"'; then
-                local out_data=$(echo "$status" | grep -oP '"out-data":"\K[^"]+' || echo "")
-                if [ -n "$out_data" ]; then
-                    echo -n "$out_data" | base64 -d 2>/dev/null
-                fi
+                echo "$status"
                 return 0
             fi
             count=$((count+1))
         done
-        echo "Timeout waiting for command"
+        echo ""
         return 1
+    }
+    
+    get_cmd_output() {
+        local cmd_arr=("$@")
+        local pvesh_args=""
+        for arg in "${cmd_arr[@]}"; do
+            local escaped_arg=$(echo "$arg" | sed 's/"/\\"/g')
+            pvesh_args="$pvesh_args --command \"$escaped_arg\""
+        done
+        
+        local out=$(eval pvesh create /nodes/$NODE/qemu/$VMID/agent/exec $pvesh_args --output-format json 2>/dev/null)
+        local pid=$(echo "$out" | grep -oP '"pid":\K[0-9]+')
+        
+        if [ -z "$pid" ]; then
+            echo ""
+            return 1
+        fi
+        
+        local res=$(wait_for_pid $pid 30)
+        local out_data=$(echo "$res" | grep -oP '"out-data":"\K[^"]+' || echo "")
+        if [ -n "$out_data" ]; then
+            echo -n "$out_data" | base64 -d 2>/dev/null | head -20
+            echo ""
+        fi
     }
     
     # VM side - Disk layout
     echo -e "\n${GREEN}[VM SIDE]${NC}"
     echo "--- lsblk output ---"
-    wait_and_get_output --command "lsblk" --command "-f" || echo "Failed"
+    OUTPUT=$(get_cmd_output "lsblk" "-f")
+    if [ -n "$OUTPUT" ]; then
+        echo "$OUTPUT"
+    else
+        echo "Failed to get lsblk"
+    fi
     
     echo -e "\n--- Physical Volumes ---"
-    wait_and_get_output --command "pvs" || echo "Failed (may not have LVM)"
+    OUTPUT=$(get_cmd_output "pvs")
+    if [ -n "$OUTPUT" ]; then
+        echo "$OUTPUT"
+    else
+        echo "Failed or no LVM (this is OK if VM doesn't use LVM)"
+    fi
     
     echo -e "\n--- Volume Groups ---"
-    wait_and_get_output --command "vgs" || echo "Failed (may not have LVM)"
+    OUTPUT=$(get_cmd_output "vgs")
+    if [ -n "$OUTPUT" ]; then
+        echo "$OUTPUT"
+    else
+        echo "Failed or no LVM (this is OK if VM doesn't use LVM)"
+    fi
     
     echo -e "\n--- Logical Volumes ---"
-    wait_and_get_output --command "lvs" --command "-o" --command "vg_name,lv_name,lv_size,path" || echo "Failed (may not have LVM)"
+    OUTPUT=$(get_cmd_output "lvs" "-o" "vg_name,lv_name,lv_size,path")
+    if [ -n "$OUTPUT" ]; then
+        echo "$OUTPUT"
+    else
+        echo "Failed or no LVM (this is OK if VM doesn't use LVM)"
+    fi
     
     echo -e "\n--- Filesystem info ---"
-    wait_and_get_output --command "df" --command "-h" --command "/" || echo "Failed"
+    OUTPUT=$(get_cmd_output "df" "-h" "/")
+    if [ -n "$OUTPUT" ]; then
+        echo "$OUTPUT"
+    else
+        echo "Failed"
+    fi
     
     echo -e "\n--- Disk devices (detailed) ---"
-    wait_and_get_output --command "lsblk" --command "-ndo" --command "NAME,TYPE,SIZE,MOUNTPOINT" || echo "Failed"
+    OUTPUT=$(get_cmd_output "lsblk" "-ndo" "NAME,TYPE,SIZE,MOUNTPOINT")
+    if [ -n "$OUTPUT" ]; then
+        echo "$OUTPUT"
+    else
+        echo "Failed"
+    fi
     
 done
 
