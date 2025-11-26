@@ -300,7 +300,11 @@ for VMID in "${VMIDS[@]}"; do
     VG_NAME="$PRE_VG_NAME"
     LV_NAME="$PRE_LV_NAME"
     
-    if [ -z "$MAIN_DEVICE" ]; then
+    # Si teníamos datos previos, USARLOS y no intentar redetectar (que falla al arrancar)
+    if [ -n "$MAIN_DEVICE" ]; then
+        echo "  • Usando dispositivo detectado previamente: /dev/$MAIN_DEVICE"
+    else
+        # Solo si no teníamos datos previos intentamos detectar
         echo -n "  • Detectando dispositivo (post-boot)... "
         sleep 5
         for attempt in 1 2 3 4 5; do
@@ -309,13 +313,11 @@ for VMID in "${VMIDS[@]}"; do
             sleep 2
         done
         if [ -z "$MAIN_DEVICE" ]; then MAIN_DEVICE="sda"; echo "Asumiendo sda"; else echo "/dev/$MAIN_DEVICE"; fi
-    else
-        echo "  • Usando dispositivo: /dev/$MAIN_DEVICE"
     fi
     
-    # Verificar tamaño físico del disco
-    DISK_SIZE=$(get_cmd_output "sh" "-c" "lsblk -ndo NAME,SIZE /dev/$MAIN_DEVICE | head -1 | awk '{print \$2}'")
-    echo "    (Tamaño detectado por el SO: $DISK_SIZE)"
+    # Verificar tamaño físico del disco (solo informativo)
+    DISK_SIZE=$(get_cmd_output "sh" "-c" "lsblk -ndo NAME,SIZE /dev/$MAIN_DEVICE 2>/dev/null | head -1 | awk '{print \$2}'")
+    echo "    (Tamaño actual en SO: ${DISK_SIZE:-Desconocido})"
     
     echo -n "  • Rescanning... "
     run_cmd "sh" "-c" "echo 1 > /sys/class/block/${MAIN_DEVICE}/device/rescan 2>/dev/null || partprobe /dev/${MAIN_DEVICE}"
@@ -341,20 +343,24 @@ for VMID in "${VMIDS[@]}"; do
     
     echo -n "  • Expandiendo partición... "
     PART_NUM="${PARTITION#${MAIN_DEVICE}}"
-    # Intentar growpart primero con dry-run para ver si hace falta
+    
+    # Intentar arreglar GPT backup header (ahora sgdisk debería existir)
+    run_cmd "sudo" "sgdisk" "-e" "/dev/${MAIN_DEVICE}" >/dev/null 2>&1 || true
+    
+    # Intentar growpart (ahora debería existir y es la mejor opción)
     if run_cmd "sudo" "growpart" "/dev/${MAIN_DEVICE}" "$PART_NUM" >/dev/null 2>&1; then
-        echo -e "${GREEN}[✓]${NC}"
-        # Forzar actualización de tabla de particiones después de growpart
+        echo -e "${GREEN}[✓] (growpart)${NC}"
         sleep 1
         run_cmd "sudo" "partprobe" "/dev/${MAIN_DEVICE}" >/dev/null 2>&1 || true
         sleep 2
-    elif run_cmd "sudo" "sh" "-c" "parted /dev/${MAIN_DEVICE} resizepart ${PART_NUM} 100%" >/dev/null 2>&1; then
+    # Si falla (ej. no se instaló), usar parted como último recurso
+    elif run_cmd "sudo" "sh" "-c" "parted -s /dev/${MAIN_DEVICE} resizepart ${PART_NUM} 100%" >/dev/null 2>&1; then
         echo -e "${GREEN}[✓] (parted)${NC}"
         sleep 1
         run_cmd "sudo" "partprobe" "/dev/${MAIN_DEVICE}" >/dev/null 2>&1 || true
         sleep 2
     else
-        echo -e "${YELLOW}[!]${NC} (sin cambios)"
+        echo -e "${YELLOW}[!]${NC} (sin cambios o falló)"
     fi
     
     echo -n "  • Rescanning PV... "
