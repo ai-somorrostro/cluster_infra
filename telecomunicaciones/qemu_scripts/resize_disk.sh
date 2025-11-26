@@ -131,32 +131,32 @@ for VMID in "${VMIDS[@]}"; do
     echo "VM $VMID - Aumentar disco $AMOUNT"
     echo -e "==========================================${NC}"
     
-    # Auto-detectar nodo real de la VM de forma robusta
-    # Buscamos en la lista de recursos la línea que contiene el vmid y extraemos el nodo
-    REAL_NODE=$(pvesh get /cluster/resources --type vm --output-format json 2>/dev/null | grep -oP '"node":"\K[^"]+(?=",.*"vmid":'$VMID')' || echo "")
+    # Auto-detectar nodo real de la VM probando nodos disponibles
+    # (Método infalible: probar dónde existe realmente)
+    TARGET_NODE=""
     
-    # Si el grep anterior falla (depende del orden de campos), intentamos método alternativo más seguro
-    if [ -z "$REAL_NODE" ]; then
-         REAL_NODE=$(pvesh get /cluster/resources --type vm --output-format json 2>/dev/null | tr ',' '\n' | grep -B 2 "\"vmid\":$VMID" | grep '"node"' | cut -d'"' -f4)
-    fi
-
-    if [ -n "$REAL_NODE" ]; then
-        if [ "$REAL_NODE" != "$NODE" ]; then
-            echo -e "${YELLOW}[!]${NC} VM $VMID detectada en nodo '$REAL_NODE' (diferente al indicado '$NODE'). Usando $REAL_NODE."
-            TARGET_NODE="$REAL_NODE"
-        else
-            TARGET_NODE="$NODE"
-        fi
-    else
-        # Fallback: usar el indicado si no se encuentra
+    # Primero probar el nodo indicado por el usuario
+    if pvesh get /nodes/$NODE/qemu/$VMID/status/current >/dev/null 2>&1; then
         TARGET_NODE="$NODE"
+    else
+        # Si no está, buscar en todos los nodos del cluster
+        NODES_LIST=$(pvesh get /nodes --output-format json 2>/dev/null | grep -oP '"node":"\K[^"]+')
+        for CANDIDATE in $NODES_LIST; do
+            if [ "$CANDIDATE" == "$NODE" ]; then continue; fi
+            if pvesh get /nodes/$CANDIDATE/qemu/$VMID/status/current >/dev/null 2>&1; then
+                TARGET_NODE="$CANDIDATE"
+                echo -e "${YELLOW}[!]${NC} VM $VMID encontrada en nodo '$TARGET_NODE' (diferente al indicado '$NODE')."
+                break
+            fi
+        done
+    fi
+    
+    if [ -z "$TARGET_NODE" ]; then
+        echo -e "${RED}[✗]${NC} VM $VMID no encontrada en ningún nodo del cluster."
+        continue
     fi
     
     VM_STATUS=$(pvesh get /nodes/$TARGET_NODE/qemu/$VMID/status/current --output-format json 2>/dev/null || echo "")
-    if [ -z "$VM_STATUS" ]; then
-        echo -e "${RED}[✗]${NC} VM $VMID no encontrada en nodo $TARGET_NODE (o error)"
-        continue
-    fi
     
     # --- Funciones Helper (actualizadas para usar TARGET_NODE) ---
     # Redefinimos las funciones dentro del loop o pasamos la variable, 
