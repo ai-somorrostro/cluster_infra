@@ -227,24 +227,38 @@ for VMID in "${VMIDS[@]}"; do
     # 5. Aplicar redimensionado dentro de la VM
     echo -e "${YELLOW}[*]${NC} Aplicando redimensionado LVM en la VM..."
     
-    # Esperar un poco más para asegurar que el SO está listo
-    sleep 5
+    # Esperar a que el SO esté realmente listo
+    echo -n "  • Esperando estabilización del SO... "
+    sleep 10
+    echo "OK"
     
-    # Detectar dispositivo de bloque principal (con reintentos)
+    # Detectar dispositivo de bloque principal (con reintentos y fallbacks)
     echo -n "  • Detectando dispositivo... "
     MAIN_DEVICE=""
     for attempt in 1 2 3 4 5; do
-        MAIN_DEVICE=$(get_cmd_output "sh" "-c" "lsblk -ndo NAME,TYPE | grep '^[a-z]' | grep -v '^loop' | head -1 | awk '{print \$1}'")
-        if [ -n "$MAIN_DEVICE" ] && echo "$MAIN_DEVICE" | grep -qP '^[a-z]{2,3}[0-9]*$'; then
+        # Intento 1: lsblk normal
+        MAIN_DEVICE=$(get_cmd_output "sh" "-c" "lsblk -ndo NAME,TYPE 2>/dev/null | grep 'disk' | head -1 | awk '{print \$1}'")
+        
+        # Intento 2: lsblk con ruta completa (si falla el anterior)
+        if [ -z "$MAIN_DEVICE" ]; then
+            MAIN_DEVICE=$(get_cmd_output "sh" "-c" "/usr/bin/lsblk -ndo NAME,TYPE 2>/dev/null | grep 'disk' | head -1 | awk '{print \$1}'")
+        fi
+
+        # Intento 3: /proc/partitions (fallback clásico)
+        if [ -z "$MAIN_DEVICE" ]; then
+            MAIN_DEVICE=$(get_cmd_output "sh" "-c" "cat /proc/partitions | awk '\$4 ~ /^[sv]d[a-z]$|nvme[0-9]n[0-9]$/ {print \$4}' | head -1")
+        fi
+
+        if [ -n "$MAIN_DEVICE" ]; then
             break
         fi
         sleep 2
     done
     
     if [ -z "$MAIN_DEVICE" ]; then
-        echo -e "${RED}[✗]${NC} No se pudo detectar el dispositivo de disco principal"
-        echo -e "${RED}[✗]${NC} Output recibido: '$MAIN_DEVICE'"
-        continue
+        # Último recurso: asumir sda
+        echo -e "${YELLOW}[!]${NC} No se pudo detectar, asumiendo 'sda'"
+        MAIN_DEVICE="sda"
     fi
     echo "/dev/$MAIN_DEVICE"
     
