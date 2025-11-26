@@ -313,6 +313,10 @@ for VMID in "${VMIDS[@]}"; do
         echo "  • Usando dispositivo: /dev/$MAIN_DEVICE"
     fi
     
+    # Verificar tamaño físico del disco
+    DISK_SIZE=$(get_cmd_output "sh" "-c" "lsblk -ndo NAME,SIZE /dev/$MAIN_DEVICE | head -1 | awk '{print \$2}'")
+    echo "    (Tamaño detectado por el SO: $DISK_SIZE)"
+    
     echo -n "  • Rescanning... "
     run_cmd "sh" "-c" "echo 1 > /sys/class/block/${MAIN_DEVICE}/device/rescan 2>/dev/null || partprobe /dev/${MAIN_DEVICE}"
     echo -e "${GREEN}[✓]${NC}"
