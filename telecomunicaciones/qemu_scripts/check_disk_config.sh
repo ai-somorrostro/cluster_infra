@@ -43,35 +43,52 @@ for VMID in "${VMIDS[@]}"; do
         continue
     fi
     
+    # Helper function to wait for command and get output
+    wait_and_get_output() {
+        local cmd_out=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec "$@" --output-format json 2>/dev/null)
+        local pid=$(echo "$cmd_out" | grep -oP '"pid":\K[0-9]+')
+        if [ -z "$pid" ]; then
+            echo "Failed to start command"
+            return 1
+        fi
+        
+        # Wait for command to finish
+        local count=0
+        while [ $count -lt 30 ]; do
+            sleep 1
+            local status=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $pid --output-format json 2>/dev/null || echo "")
+            if echo "$status" | grep -q '"exited"'; then
+                local out_data=$(echo "$status" | grep -oP '"out-data":"\K[^"]+' || echo "")
+                if [ -n "$out_data" ]; then
+                    echo -n "$out_data" | base64 -d 2>/dev/null
+                fi
+                return 0
+            fi
+            count=$((count+1))
+        done
+        echo "Timeout waiting for command"
+        return 1
+    }
+    
     # VM side - Disk layout
     echo -e "\n${GREEN}[VM SIDE]${NC}"
     echo "--- lsblk output ---"
-    pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "lsblk" --command "-f" --output-format json 2>/dev/null | grep -oP '"out-data":"\K[^"]+' | base64 -d 2>/dev/null || echo "Failed to get lsblk"
-    
-    sleep 1
+    wait_and_get_output --command "lsblk" --command "-f" || echo "Failed"
     
     echo -e "\n--- Physical Volumes ---"
-    pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "pvs" --output-format json 2>/dev/null | grep -oP '"out-data":"\K[^"]+' | base64 -d 2>/dev/null || echo "Failed to get pvs"
-    
-    sleep 1
+    wait_and_get_output --command "pvs" || echo "Failed (may not have LVM)"
     
     echo -e "\n--- Volume Groups ---"
-    pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "vgs" --output-format json 2>/dev/null | grep -oP '"out-data":"\K[^"]+' | base64 -d 2>/dev/null || echo "Failed to get vgs"
-    
-    sleep 1
+    wait_and_get_output --command "vgs" || echo "Failed (may not have LVM)"
     
     echo -e "\n--- Logical Volumes ---"
-    pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "lvs" --command "-o" --command "vg_name,lv_name,lv_size,path" --output-format json 2>/dev/null | grep -oP '"out-data":"\K[^"]+' | base64 -d 2>/dev/null || echo "Failed to get lvs"
-    
-    sleep 1
+    wait_and_get_output --command "lvs" --command "-o" --command "vg_name,lv_name,lv_size,path" || echo "Failed (may not have LVM)"
     
     echo -e "\n--- Filesystem info ---"
-    pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "df" --command "-h" --command "/" --output-format json 2>/dev/null | grep -oP '"out-data":"\K[^"]+' | base64 -d 2>/dev/null || echo "Failed to get df"
+    wait_and_get_output --command "df" --command "-h" --command "/" || echo "Failed"
     
-    sleep 1
-    
-    echo -e "\n--- Disk devices ---"
-    pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "lsblk" --command "-ndo" --command "NAME,TYPE,SIZE,MOUNTPOINT" --output-format json 2>/dev/null | grep -oP '"out-data":"\K[^"]+' | base64 -d 2>/dev/null || echo "Failed to get disk devices"
+    echo -e "\n--- Disk devices (detailed) ---"
+    wait_and_get_output --command "lsblk" --command "-ndo" --command "NAME,TYPE,SIZE,MOUNTPOINT" || echo "Failed"
     
 done
 
