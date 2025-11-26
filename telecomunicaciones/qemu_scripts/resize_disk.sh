@@ -83,7 +83,8 @@ get_cmd_output() {
     local res=$(wait_for_pid $pid 30)
     local out_data=$(echo "$res" | grep -oP '"out-data":"\K[^"]+' || echo "")
     if [ -n "$out_data" ]; then
-        echo -n "$out_data" | base64 -d 2>/dev/null | tr -d '\r\n' | sed 's/[[:space:]]*$//'
+        # Decodificar y mantener saltos de línea, solo limpiar \r
+        echo -n "$out_data" | base64 -d 2>/dev/null | tr -d '\r' | sed 's/[[:space:]]*$//'
     fi
 }
 
@@ -139,13 +140,24 @@ for VMID in "${VMIDS[@]}"; do
     
     if [ "$CURRENT_STATUS" == "running" ] && [ "$AGENT_ENABLED" == "1" ]; then
         echo -n "  • Verificando espacio libre existente... "
-        VG_FREE_RESULT=$(get_cmd_output "sudo" "sh" "-c" "vgs --noheadings --units g --nosuffix -o vg_free 2>/dev/null | head -1 | tr -d ' ' | awk '{print int(\$1)}'" || echo "0")
-        if [ -n "$VG_FREE_RESULT" ] && [ "$VG_FREE_RESULT" != "0" ] && [ "$VG_FREE_RESULT" -gt 0 ] 2>/dev/null; then
-            echo -e "${YELLOW}${VG_FREE_RESULT}GB libre en VG${NC}"
-            echo -e "  ${YELLOW}[!]${NC} Atención: Ya hay ${VG_FREE_RESULT}GB de espacio libre en el VG que no está siendo usado."
-            echo -e "  ${YELLOW}[!]${NC} El script expandirá el LV para usar este espacio + el nuevo espacio añadido."
+        VG_OUTPUT=$(get_cmd_output "sudo" "vgs" "--units" "g" 2>/dev/null || echo "")
+        if [ -n "$VG_OUTPUT" ]; then
+            # Extraer VFree (última columna numérica con formato como "24.00g")
+            VG_FREE_RAW=$(echo "$VG_OUTPUT" | tail -n +2 | awk '{print $NF}' | grep -oP '[0-9.]+' | head -1 || echo "")
+            if [ -n "$VG_FREE_RAW" ]; then
+                VG_FREE_RESULT=$(echo "$VG_FREE_RAW" | awk '{printf "%.0f", $1}')
+                if [ -n "$VG_FREE_RESULT" ] && [ "$VG_FREE_RESULT" -gt 0 ] 2>/dev/null; then
+                    echo -e "${YELLOW}${VG_FREE_RESULT}GB libre en VG${NC}"
+                    echo -e "  ${YELLOW}[!]${NC} Atención: Ya hay ${VG_FREE_RESULT}GB de espacio libre en el VG que no está siendo usado."
+                    echo -e "  ${YELLOW}[!]${NC} El script expandirá el LV para usar este espacio + el nuevo espacio añadido."
+                else
+                    echo -e "${GREEN}Sin espacio libre${NC}"
+                fi
+            else
+                echo -e "${GREEN}Sin espacio libre${NC}"
+            fi
         else
-            echo -e "${GREEN}Sin espacio libre${NC}"
+            echo -e "${YELLOW}No se pudo verificar${NC}"
         fi
         echo ""
     fi
@@ -297,13 +309,22 @@ for VMID in "${VMIDS[@]}"; do
     
     # Verificar espacio libre en VG antes de redimensionar
     echo -n "  • Verificando espacio libre en VG... "
-    VG_FREE=$(get_cmd_output "sudo" "sh" "-c" "vgs --noheadings --units g --nosuffix -o vg_free $VG_NAME 2>/dev/null | tr -d ' ' | awk '{print int(\$1)}'" || echo "0")
-    VG_SIZE=$(get_cmd_output "sudo" "sh" "-c" "vgs --noheadings --units g --nosuffix -o vg_size $VG_NAME 2>/dev/null | tr -d ' ' | awk '{print int(\$1)}'" || echo "0")
-    
-    if [ -n "$VG_FREE" ] && [ "$VG_FREE" != "0" ] && [ "$VG_FREE" -gt 0 ]; then
-        echo -e "${YELLOW}${VG_FREE}GB libre${NC}"
-        echo -e "  ${YELLOW}[!]${NC} Hay ${VG_FREE}GB de espacio libre en el VG que no está siendo usado."
-        echo -e "  ${YELLOW}[!]${NC} El script expandirá el LV para usar este espacio libre + el nuevo espacio añadido."
+    VG_OUTPUT=$(get_cmd_output "sudo" "vgs" "$VG_NAME" "--units" "g" 2>/dev/null || echo "")
+    if [ -n "$VG_OUTPUT" ]; then
+        # VFree es la última columna (formato "24.00g")
+        VG_FREE_RAW=$(echo "$VG_OUTPUT" | tail -n +2 | awk '{print $NF}' | grep -oP '[0-9.]+' | head -1 || echo "")
+        if [ -n "$VG_FREE_RAW" ]; then
+            VG_FREE=$(echo "$VG_FREE_RAW" | awk '{printf "%.0f", $1}')
+            if [ -n "$VG_FREE" ] && [ "$VG_FREE" -gt 0 ] 2>/dev/null; then
+                echo -e "${YELLOW}${VG_FREE}GB libre${NC}"
+                echo -e "  ${YELLOW}[!]${NC} Hay ${VG_FREE}GB de espacio libre en el VG que no está siendo usado."
+                echo -e "  ${YELLOW}[!]${NC} El script expandirá el LV para usar este espacio libre + el nuevo espacio añadido."
+            else
+                echo -e "${GREEN}Sin espacio libre${NC}"
+            fi
+        else
+            echo -e "${GREEN}Sin espacio libre${NC}"
+        fi
     else
         echo -e "${GREEN}Sin espacio libre${NC}"
     fi
