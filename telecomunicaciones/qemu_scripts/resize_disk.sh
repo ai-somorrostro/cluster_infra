@@ -354,8 +354,12 @@ for VMID in "${VMIDS[@]}"; do
     fi
     
     echo -n "  • Rescanning PV... "
-    run_cmd "sudo" "pvresize" "/dev/$PV_NAME" >/dev/null 2>&1 || true
+    run_cmd "sudo" "pvresize" "-v" "/dev/$PV_NAME" >/dev/null 2>&1 || true
     echo -e "${GREEN}[✓]${NC}"
+    
+    # Verificar si el PV realmente tiene espacio libre ahora
+    PV_FREE=$(get_cmd_output "sudo" "pvs" "--noheadings" "-o" "pv_free" "/dev/$PV_NAME" 2>/dev/null | tr -d ' g<')
+    echo -e "    (Espacio libre en PV tras resize: ${PV_FREE}g)"
     
     if [ -z "$VG_NAME" ]; then
         echo -n "  • Detectando VG/LV... "
@@ -369,18 +373,19 @@ for VMID in "${VMIDS[@]}"; do
     
     if [ -n "$VG_NAME" ] && [ -n "$LV_NAME" ]; then
         echo -n "  • Expandiendo LV... "
-        # Capturar output de error para mostrarlo si falla
+        # Capturar todo el output (stdout y stderr)
         LV_OUT=$(get_cmd_output "sudo" "lvextend" "-l" "+100%FREE" "$VG_NAME/$LV_NAME" 2>&1)
-        if echo "$LV_OUT" | grep -q "successfully resized"; then
+        # Comprobar si contiene mensaje de éxito O si dice que ya está en tamaño máximo
+        if echo "$LV_OUT" | grep -q -E "successfully resized|matches existing size"; then
             echo -e "${GREEN}[✓]${NC}"
             
             echo -n "  • Redimensionando FS... "
             run_cmd "sudo" "resize2fs" "/dev/$VG_NAME/$LV_NAME" >/dev/null 2>&1 || run_cmd "sudo" "xfs_growfs" "/dev/$VG_NAME/$LV_NAME" >/dev/null 2>&1
             echo -e "${GREEN}[✓]${NC}"
         else
-            echo -e "${RED}[✗]${NC} Falló lvextend"
-            # Mostrar las primeras líneas del error para depurar
-            echo -e "${RED}    Error: $(echo "$LV_OUT" | head -1)${NC}"
+            echo -e "${RED}[✗] Falló lvextend${NC}"
+            echo -e "${YELLOW}Output completo:${NC}"
+            echo "$LV_OUT"
         fi
     else
         echo -e "${RED}[✗]${NC} Faltan datos VG/LV"
