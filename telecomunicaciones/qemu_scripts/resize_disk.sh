@@ -131,9 +131,15 @@ for VMID in "${VMIDS[@]}"; do
     echo "VM $VMID - Aumentar disco $AMOUNT"
     echo -e "==========================================${NC}"
     
-    # Auto-detectar nodo real de la VM
-    REAL_NODE=$(pvesh get /cluster/resources --type vm --output-format json 2>/dev/null | grep -B 5 "\"vmid\":$VMID" | grep '"node"' | awk -F'"' '{print $4}')
+    # Auto-detectar nodo real de la VM de forma robusta
+    # Buscamos en la lista de recursos la línea que contiene el vmid y extraemos el nodo
+    REAL_NODE=$(pvesh get /cluster/resources --type vm --output-format json 2>/dev/null | grep -oP '"node":"\K[^"]+(?=",.*"vmid":'$VMID')' || echo "")
     
+    # Si el grep anterior falla (depende del orden de campos), intentamos método alternativo más seguro
+    if [ -z "$REAL_NODE" ]; then
+         REAL_NODE=$(pvesh get /cluster/resources --type vm --output-format json 2>/dev/null | tr ',' '\n' | grep -B 2 "\"vmid\":$VMID" | grep '"node"' | cut -d'"' -f4)
+    fi
+
     if [ -n "$REAL_NODE" ]; then
         if [ "$REAL_NODE" != "$NODE" ]; then
             echo -e "${YELLOW}[!]${NC} VM $VMID detectada en nodo '$REAL_NODE' (diferente al indicado '$NODE'). Usando $REAL_NODE."
@@ -142,7 +148,7 @@ for VMID in "${VMIDS[@]}"; do
             TARGET_NODE="$NODE"
         fi
     else
-        # Fallback si no se encuentra en resources (ej. cluster no sincronizado), usar el indicado
+        # Fallback: usar el indicado si no se encuentra
         TARGET_NODE="$NODE"
     fi
     
