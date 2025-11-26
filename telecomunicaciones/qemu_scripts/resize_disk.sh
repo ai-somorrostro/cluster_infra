@@ -131,11 +131,37 @@ for VMID in "${VMIDS[@]}"; do
     echo "VM $VMID - Aumentar disco $AMOUNT"
     echo -e "==========================================${NC}"
     
-    VM_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/status/current --output-format json 2>/dev/null)
+    # Auto-detectar nodo real de la VM
+    REAL_NODE=$(pvesh get /cluster/resources --type vm --output-format json 2>/dev/null | grep -B 5 "\"vmid\":$VMID" | grep '"node"' | awk -F'"' '{print $4}')
+    
+    if [ -n "$REAL_NODE" ]; then
+        if [ "$REAL_NODE" != "$NODE" ]; then
+            echo -e "${YELLOW}[!]${NC} VM $VMID detectada en nodo '$REAL_NODE' (diferente al indicado '$NODE'). Usando $REAL_NODE."
+            TARGET_NODE="$REAL_NODE"
+        else
+            TARGET_NODE="$NODE"
+        fi
+    else
+        # Fallback si no se encuentra en resources (ej. cluster no sincronizado), usar el indicado
+        TARGET_NODE="$NODE"
+    fi
+    
+    VM_STATUS=$(pvesh get /nodes/$TARGET_NODE/qemu/$VMID/status/current --output-format json 2>/dev/null || echo "")
     if [ -z "$VM_STATUS" ]; then
-        echo -e "${RED}[✗]${NC} VM $VMID no existe en nodo $NODE"
+        echo -e "${RED}[✗]${NC} VM $VMID no encontrada en nodo $TARGET_NODE (o error)"
         continue
     fi
+    
+    # --- Funciones Helper (actualizadas para usar TARGET_NODE) ---
+    # Redefinimos las funciones dentro del loop o pasamos la variable, 
+    # pero como son globales y usan $NODE, mejor actualizamos una variable global de uso actual
+    
+    CURRENT_NODE_FOR_CMD="$TARGET_NODE"
+    
+    # Actualizar NODE global temporalmente para las funciones helper existentes que usan $NODE
+    # (Es un hack rápido para no reescribir todas las funciones)
+    ORIGINAL_NODE_ARG="$NODE"
+    NODE="$TARGET_NODE"
     
     CURRENT_STATUS=$(echo "$VM_STATUS" | grep -oP '"status":"\K[^"]+')
     AGENT_ENABLED=$(echo "$VM_STATUS" | grep -oP '"agent":\K[0-9]+' || echo "0")
@@ -342,14 +368,24 @@ for VMID in "${VMIDS[@]}"; do
     
     echo -n "  • Espacio final: "
     sleep 2
-    DF_OUT=$(get_cmd_output "sudo" "df" "-h" "/" | tail -1 | awk '{print $2, $3, $4}')
+    # Usar -P para formato POSIX (evita saltos de línea) y coger la línea que termina en /
+    DF_OUT=$(get_cmd_output "sudo" "df" "-hP" "/" | grep '/$' | awk '{print $2, $3, $4}')
     if [ -n "$DF_OUT" ]; then
         echo "$DF_OUT"
     else
-        echo "N/A (verificar manualmente)"
+        sleep 2
+        DF_OUT=$(get_cmd_output "sudo" "df" "-hP" "/" | grep '/$' | awk '{print $2, $3, $4}')
+        if [ -n "$DF_OUT" ]; then
+            echo "$DF_OUT"
+        else
+            echo "N/A (verificar manualmente)"
+        fi
     fi
     
     echo -e "${GREEN}[✓]${NC} Fin VM $VMID"
+    
+    # Restaurar nodo original para la siguiente iteración (por si acaso)
+    NODE="$ORIGINAL_NODE_ARG"
 done
 
 echo -e "\n${GREEN}=========================================="
