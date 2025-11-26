@@ -341,7 +341,13 @@ for VMID in "${VMIDS[@]}"; do
     fi
     
     echo -n "  • Espacio final: "
-    get_cmd_output "sh" "-c" "df -h / | tail -1 | awk '{print \$2, \$3, \$4}'" || echo "N/A"
+    sleep 2
+    DF_OUT=$(get_cmd_output "sudo" "df" "-h" "/" | tail -1 | awk '{print $2, $3, $4}')
+    if [ -n "$DF_OUT" ]; then
+        echo "$DF_OUT"
+    else
+        echo "N/A (verificar manualmente)"
+    fi
     
     echo -e "${GREEN}[✓]${NC} Fin VM $VMID"
 done
