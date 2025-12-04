@@ -80,31 +80,60 @@ for VMID in "${VMS[@]}"; do
     # Intentar expandir automáticamente
     echo "Expandiendo partición dentro de la VM..."
     
-    # Obtener VG y LV directamente usando comandos LVM (más confiable)
+    # Obtener VG, LV y PV directamente usando comandos LVM
     VG_NAME=$(exec_in_vm "vgs --noheadings -o vg_name 2>/dev/null | head -1" 2>/dev/null | tr -d '[:space:]')
     LV_NAME=$(exec_in_vm "lvs --noheadings -o lv_name 2>/dev/null | head -1" 2>/dev/null | tr -d '[:space:]')
+    PV_NAME=$(exec_in_vm "pvs --noheadings -o pv_name 2>/dev/null | head -1" 2>/dev/null | tr -d '[:space:]')
     
-    if [ -n "$VG_NAME" ] && [ -n "$LV_NAME" ]; then
+    if [ -n "$VG_NAME" ] && [ -n "$LV_NAME" ] && [ -n "$PV_NAME" ]; then
       LV_PATH="/dev/$VG_NAME/$LV_NAME"
-      echo "Detectado LVM: VG=$VG_NAME, LV=$LV_NAME"
-      echo "Expandiendo $LV_PATH..."
+      echo "Detectado LVM: VG=$VG_NAME, LV=$LV_NAME, PV=$PV_NAME"
       
-      EXPAND_OUTPUT=$(exec_in_vm "lvextend -l +100%FREE $LV_PATH 2>&1 && resize2fs $LV_PATH 2>&1" 2>/dev/null)
-      EXPAND_EXIT=$?
-      if [ $EXPAND_EXIT -eq 0 ]; then
-        echo "✓ Partición expandida correctamente."
-        [ -n "$EXPAND_OUTPUT" ] && echo "$EXPAND_OUTPUT"
+      # Paso 1: Actualizar el Physical Volume para que detecte el nuevo tamaño del disco
+      echo "Actualizando Physical Volume..."
+      PV_RESIZE_OUTPUT=$(exec_in_vm "pvresize $PV_NAME 2>&1" 2>/dev/null)
+      PV_RESIZE_EXIT=$?
+      
+      if [ $PV_RESIZE_EXIT -eq 0 ]; then
+        echo "✓ PV actualizado correctamente."
+        [ -n "$PV_RESIZE_OUTPUT" ] && echo "$PV_RESIZE_OUTPUT"
       else
-        echo "⚠ Error al expandir. Comandos manuales:"
+        echo "⚠ Advertencia al actualizar PV: $PV_RESIZE_OUTPUT"
+      fi
+      
+      # Paso 2: Expandir el Logical Volume
+      echo "Expandiendo Logical Volume..."
+      LV_EXTEND_OUTPUT=$(exec_in_vm "lvextend -l +100%FREE $LV_PATH 2>&1" 2>/dev/null)
+      LV_EXTEND_EXIT=$?
+      
+      if [ $LV_EXTEND_EXIT -eq 0 ]; then
+        echo "✓ LV expandido correctamente."
+        [ -n "$LV_EXTEND_OUTPUT" ] && echo "$LV_EXTEND_OUTPUT"
+        
+        # Paso 3: Expandir el filesystem
+        echo "Expandiendo filesystem..."
+        RESIZE2FS_OUTPUT=$(exec_in_vm "resize2fs $LV_PATH 2>&1" 2>/dev/null)
+        RESIZE2FS_EXIT=$?
+        
+        if [ $RESIZE2FS_EXIT -eq 0 ]; then
+          echo "✓ Filesystem expandido correctamente."
+          [ -n "$RESIZE2FS_OUTPUT" ] && echo "$RESIZE2FS_OUTPUT"
+        else
+          echo "⚠ Error al expandir filesystem: $RESIZE2FS_OUTPUT"
+        fi
+      else
+        echo "⚠ Error al expandir LV: $LV_EXTEND_OUTPUT"
+        echo "Comandos manuales:"
+        echo "  pvresize $PV_NAME"
         echo "  lvextend -l +100%FREE $LV_PATH"
         echo "  resize2fs $LV_PATH"
-        [ -n "$EXPAND_OUTPUT" ] && echo "Salida: $EXPAND_OUTPUT"
       fi
     else
-      echo "⚠ No se pudo detectar VG/LV usando comandos LVM."
+      echo "⚠ No se pudo detectar VG/LV/PV usando comandos LVM."
       echo "  VG detectado: ${VG_NAME:-'N/A'}"
       echo "  LV detectado: ${LV_NAME:-'N/A'}"
-      echo "  Expande manualmente con: lvextend -l +100%FREE /dev/vg/lv && resize2fs /dev/vg/lv"
+      echo "  PV detectado: ${PV_NAME:-'N/A'}"
+      echo "  Expande manualmente con: pvresize /dev/sdaX && lvextend -l +100%FREE /dev/vg/lv && resize2fs /dev/vg/lv"
     fi
     
     echo ""
