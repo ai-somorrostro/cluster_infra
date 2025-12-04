@@ -46,14 +46,58 @@ for VMID in "${VMS[@]}"; do
   
   if [ $? -eq 0 ]; then
     echo "✓ Resize correcto en el hipervisor para VM $VMID."
-    echo "Consultando estado interno del disco (lsblk)..."
     echo ""
     
-    # Ejecutar comando en la VM y limpiar JSON con Python inline
-    qm guest exec $VMID -- lsblk -a 2>/dev/null | python3 -c "import sys, json; print(json.load(sys.stdin)['out-data'])" 2>/dev/null || echo "No se pudo consultar el estado del disco (puede requerir qemu-guest-agent)"
+    # Función para ejecutar comandos en la VM
+    exec_in_vm() {
+      local cmd="$1"
+      pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "sh" --arg "-c" --arg "$cmd" 2>/dev/null | \
+      python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('out-data', '')); exit(0 if data.get('exited', 1) == 0 else 1)" 2>/dev/null
+      return ${PIPESTATUS[1]}
+    }
+    
+    # Intentar expandir automáticamente
+    echo "Expandiendo partición dentro de la VM..."
+    
+    # Obtener dispositivo montado en /
+    ROOT_DEV=$(exec_in_vm "df -h / | tail -1 | awk '{print \$1}'" 2>/dev/null | tr -d '[:space:]')
+    
+    if [ -n "$ROOT_DEV" ] && echo "$ROOT_DEV" | grep -qE "(mapper|/.*-.*)"; then
+      # Es LVM - extraer VG y LV
+      if echo "$ROOT_DEV" | grep -q "mapper"; then
+        # /dev/mapper/ubuntu--vg-ubuntu--lv -> ubuntu-vg/ubuntu-lv
+        MAPPER_NAME=$(echo "$ROOT_DEV" | sed 's|/dev/mapper/||' | sed 's/--/-/g')
+        if echo "$MAPPER_NAME" | grep -qE ".*-.*-"; then
+          VG_NAME=$(echo "$MAPPER_NAME" | sed 's/-[^-]*$//')
+          LV_NAME=$(echo "$MAPPER_NAME" | sed "s/^${VG_NAME}-//")
+        else
+          VG_NAME=$(echo "$MAPPER_NAME" | cut -d'-' -f1)
+          LV_NAME=$(echo "$MAPPER_NAME" | cut -d'-' -f2-)
+        fi
+        LV_PATH="/dev/$VG_NAME/$LV_NAME"
+      else
+        LV_PATH="$ROOT_DEV"
+      fi
+      
+      echo "Detectado LVM: $LV_PATH"
+      echo "Expandiendo volumen lógico..."
+      
+      EXPAND_OUTPUT=$(exec_in_vm "lvextend -l +100%FREE $LV_PATH 2>&1 && resize2fs $LV_PATH 2>&1" 2>/dev/null)
+      if [ $? -eq 0 ]; then
+        echo "✓ Partición expandida correctamente."
+        echo "$EXPAND_OUTPUT" | grep -v "^$"
+      else
+        echo "⚠ Error al expandir. Comandos manuales:"
+        echo "  lvextend -l +100%FREE $LV_PATH"
+        echo "  resize2fs $LV_PATH"
+      fi
+    else
+      echo "⚠ No se detectó LVM o no se pudo obtener el dispositivo. Expande manualmente."
+    fi
     
     echo ""
-    echo "Si ves el tamaño actualizado arriba, entra en la VM y expande la particion."
+    echo "Estado final del disco:"
+    exec_in_vm "df -h /" 2>/dev/null
   else
     echo "✗ Fallo al intentar redimensionar el disco en VM $VMID."
   fi
