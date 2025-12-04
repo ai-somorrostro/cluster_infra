@@ -80,28 +80,14 @@ for VMID in "${VMS[@]}"; do
     # Intentar expandir automáticamente
     echo "Expandiendo partición dentro de la VM..."
     
-    # Obtener dispositivo montado en /
-    ROOT_DEV=$(exec_in_vm "df -h / | tail -1 | awk '{print \$1}'" 2>/dev/null | tr -d '[:space:]')
+    # Obtener VG y LV directamente usando comandos LVM (más confiable)
+    VG_NAME=$(exec_in_vm "vgs --noheadings -o vg_name 2>/dev/null | head -1" 2>/dev/null | tr -d '[:space:]')
+    LV_NAME=$(exec_in_vm "lvs --noheadings -o lv_name 2>/dev/null | head -1" 2>/dev/null | tr -d '[:space:]')
     
-    if [ -n "$ROOT_DEV" ] && echo "$ROOT_DEV" | grep -qE "(mapper|/.*-.*)"; then
-      # Es LVM - extraer VG y LV
-      if echo "$ROOT_DEV" | grep -q "mapper"; then
-        # /dev/mapper/ubuntu--vg-ubuntu--lv -> ubuntu-vg/ubuntu-lv
-        MAPPER_NAME=$(echo "$ROOT_DEV" | sed 's|/dev/mapper/||' | sed 's/--/-/g')
-        if echo "$MAPPER_NAME" | grep -qE ".*-.*-"; then
-          VG_NAME=$(echo "$MAPPER_NAME" | sed 's/-[^-]*$//')
-          LV_NAME=$(echo "$MAPPER_NAME" | sed "s/^${VG_NAME}-//")
-        else
-          VG_NAME=$(echo "$MAPPER_NAME" | cut -d'-' -f1)
-          LV_NAME=$(echo "$MAPPER_NAME" | cut -d'-' -f2-)
-        fi
-        LV_PATH="/dev/$VG_NAME/$LV_NAME"
-      else
-        LV_PATH="$ROOT_DEV"
-      fi
-      
-      echo "Detectado LVM: $LV_PATH"
-      echo "Expandiendo volumen lógico..."
+    if [ -n "$VG_NAME" ] && [ -n "$LV_NAME" ]; then
+      LV_PATH="/dev/$VG_NAME/$LV_NAME"
+      echo "Detectado LVM: VG=$VG_NAME, LV=$LV_NAME"
+      echo "Expandiendo $LV_PATH..."
       
       EXPAND_OUTPUT=$(exec_in_vm "lvextend -l +100%FREE $LV_PATH 2>&1 && resize2fs $LV_PATH 2>&1" 2>/dev/null)
       EXPAND_EXIT=$?
@@ -115,8 +101,9 @@ for VMID in "${VMS[@]}"; do
         [ -n "$EXPAND_OUTPUT" ] && echo "Salida: $EXPAND_OUTPUT"
       fi
     else
-      echo "⚠ No se detectó LVM o no se pudo obtener el dispositivo."
-      echo "  Dispositivo detectado: ${ROOT_DEV:-'N/A'}"
+      echo "⚠ No se pudo detectar VG/LV usando comandos LVM."
+      echo "  VG detectado: ${VG_NAME:-'N/A'}"
+      echo "  LV detectado: ${LV_NAME:-'N/A'}"
       echo "  Expande manualmente con: lvextend -l +100%FREE /dev/vg/lv && resize2fs /dev/vg/lv"
     fi
     
