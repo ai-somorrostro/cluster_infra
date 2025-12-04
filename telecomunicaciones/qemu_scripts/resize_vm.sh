@@ -51,9 +51,30 @@ for VMID in "${VMS[@]}"; do
     # Función para ejecutar comandos en la VM
     exec_in_vm() {
       local cmd="$1"
-      pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "sh" --arg "-c" --arg "$cmd" 2>/dev/null | \
-      python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('out-data', '')); exit(0 if data.get('exited', 1) == 0 else 1)" 2>/dev/null
-      return ${PIPESTATUS[1]}
+      # Escapar comillas dobles
+      local escaped_cmd=$(echo "$cmd" | sed 's/"/\\"/g')
+      
+      # Ejecutar y obtener PID
+      local out=$(pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command "sh" --command "-c" --command "$escaped_cmd" --output-format json 2>/dev/null)
+      local pid=$(echo "$out" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('pid', ''))" 2>/dev/null)
+      
+      if [ -z "$pid" ]; then
+        return 1
+      fi
+      
+      # Esperar a que termine (máximo 30 segundos)
+      local count=0
+      while [ $count -lt 30 ]; do
+        sleep 1
+        local status=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $pid --output-format json 2>/dev/null)
+        if echo "$status" | python3 -c "import sys, json; data=json.load(sys.stdin); exit(0 if data.get('exited') else 1)" 2>/dev/null; then
+          # Comando terminado, obtener salida y código de salida
+          echo "$status" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('out-data', '')); exit(data.get('exitcode', 1))" 2>/dev/null
+          return $?
+        fi
+        count=$((count+1))
+      done
+      return 1
     }
     
     # Intentar expandir automáticamente
@@ -83,21 +104,25 @@ for VMID in "${VMS[@]}"; do
       echo "Expandiendo volumen lógico..."
       
       EXPAND_OUTPUT=$(exec_in_vm "lvextend -l +100%FREE $LV_PATH 2>&1 && resize2fs $LV_PATH 2>&1" 2>/dev/null)
-      if [ $? -eq 0 ]; then
+      EXPAND_EXIT=$?
+      if [ $EXPAND_EXIT -eq 0 ]; then
         echo "✓ Partición expandida correctamente."
-        echo "$EXPAND_OUTPUT" | grep -v "^$"
+        [ -n "$EXPAND_OUTPUT" ] && echo "$EXPAND_OUTPUT"
       else
         echo "⚠ Error al expandir. Comandos manuales:"
         echo "  lvextend -l +100%FREE $LV_PATH"
         echo "  resize2fs $LV_PATH"
+        [ -n "$EXPAND_OUTPUT" ] && echo "Salida: $EXPAND_OUTPUT"
       fi
     else
-      echo "⚠ No se detectó LVM o no se pudo obtener el dispositivo. Expande manualmente."
+      echo "⚠ No se detectó LVM o no se pudo obtener el dispositivo."
+      echo "  Dispositivo detectado: ${ROOT_DEV:-'N/A'}"
+      echo "  Expande manualmente con: lvextend -l +100%FREE /dev/vg/lv && resize2fs /dev/vg/lv"
     fi
     
     echo ""
     echo "Estado final del disco:"
-    exec_in_vm "df -h /" 2>/dev/null
+    exec_in_vm "df -h /" 2>/dev/null || echo "No se pudo consultar el estado final."
   else
     echo "✗ Fallo al intentar redimensionar el disco en VM $VMID."
   fi
