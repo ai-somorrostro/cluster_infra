@@ -89,7 +89,34 @@ for VMID in "${VMS[@]}"; do
       LV_PATH="/dev/$VG_NAME/$LV_NAME"
       echo "Detectado LVM: VG=$VG_NAME, LV=$LV_NAME, PV=$PV_NAME"
       
-      # Paso 1: Actualizar el Physical Volume para que detecte el nuevo tamaño del disco
+      # Extraer el dispositivo y número de partición del PV (ej: /dev/sda3 -> /dev/sda y 3)
+      DISK_DEV=$(echo "$PV_NAME" | sed 's/[0-9]*$//')
+      PART_NUM=$(echo "$PV_NAME" | sed 's/.*\([0-9]\)$/\1/')
+      
+      # Paso 1: Expandir la partición física para usar todo el espacio del disco
+      echo "Expandiendo partición física $PV_NAME..."
+      
+      # Intentar con growpart primero (más seguro)
+      if exec_in_vm "which growpart >/dev/null 2>&1" 2>/dev/null >/dev/null; then
+        PART_EXPAND_OUTPUT=$(exec_in_vm "growpart $DISK_DEV $PART_NUM 2>&1" 2>/dev/null)
+        PART_EXPAND_EXIT=$?
+      else
+        # Si no hay growpart, usar partx para actualizar la tabla de particiones
+        PART_EXPAND_OUTPUT=$(exec_in_vm "partx -u $DISK_DEV 2>&1 || partprobe $DISK_DEV 2>&1" 2>/dev/null)
+        PART_EXPAND_EXIT=$?
+      fi
+      
+      if [ $PART_EXPAND_EXIT -eq 0 ]; then
+        echo "✓ Partición física actualizada."
+        [ -n "$PART_EXPAND_OUTPUT" ] && [ "$PART_EXPAND_OUTPUT" != "CHANGED: partition=3 start=... old: size=... new: size=..." ] && echo "$PART_EXPAND_OUTPUT"
+      else
+        echo "⚠ Advertencia al expandir partición (puede ser normal si ya está expandida): $PART_EXPAND_OUTPUT"
+      fi
+      
+      # Esperar un momento para que el kernel detecte los cambios
+      sleep 2
+      
+      # Paso 2: Actualizar el Physical Volume para que detecte el nuevo tamaño de la partición
       echo "Actualizando Physical Volume..."
       PV_RESIZE_OUTPUT=$(exec_in_vm "pvresize $PV_NAME 2>&1" 2>/dev/null)
       PV_RESIZE_EXIT=$?
@@ -109,7 +136,7 @@ for VMID in "${VMS[@]}"; do
       
       echo "  VG total: ${VG_SIZE}G, VG libre: ${VG_FREE}G, LV actual: ${LV_SIZE}G"
       
-      # Paso 2: Expandir el Logical Volume
+      # Paso 3: Expandir el Logical Volume
       echo "Expandiendo Logical Volume..."
       
       # Intentar primero con +100%FREE
@@ -134,7 +161,7 @@ for VMID in "${VMS[@]}"; do
         echo "✓ LV expandido correctamente."
         [ -n "$LV_EXTEND_OUTPUT" ] && echo "$LV_EXTEND_OUTPUT"
         
-        # Paso 3: Expandir el filesystem
+        # Paso 4: Expandir el filesystem
         echo "Expandiendo filesystem..."
         RESIZE2FS_OUTPUT=$(exec_in_vm "resize2fs $LV_PATH 2>&1" 2>/dev/null)
         RESIZE2FS_EXIT=$?
@@ -151,6 +178,7 @@ for VMID in "${VMS[@]}"; do
         exec_in_vm "vgs $VG_NAME && lvs $VG_NAME/$LV_NAME" 2>/dev/null
         echo ""
         echo "Comandos manuales:"
+        echo "  growpart $DISK_DEV $PART_NUM"
         echo "  pvresize $PV_NAME"
         echo "  lvextend -l 100%VG $LV_PATH"
         echo "  resize2fs $LV_PATH"
