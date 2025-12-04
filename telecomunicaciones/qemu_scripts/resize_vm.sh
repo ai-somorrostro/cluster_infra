@@ -101,10 +101,34 @@ for VMID in "${VMS[@]}"; do
         echo "⚠ Advertencia al actualizar PV: $PV_RESIZE_OUTPUT"
       fi
       
+      # Verificar espacio libre del VG después del pvresize
+      echo "Verificando espacio disponible en VG..."
+      VG_FREE=$(exec_in_vm "vgs --noheadings --units g -o vg_free $VG_NAME 2>/dev/null | awk '{print \$1}'" 2>/dev/null | tr -d '[:space:]')
+      VG_SIZE=$(exec_in_vm "vgs --noheadings --units g -o vg_size $VG_NAME 2>/dev/null | awk '{print \$1}'" 2>/dev/null | tr -d '[:space:]')
+      LV_SIZE=$(exec_in_vm "lvs --noheadings --units g -o lv_size $VG_NAME/$LV_NAME 2>/dev/null | awk '{print \$1}'" 2>/dev/null | tr -d '[:space:]')
+      
+      echo "  VG total: ${VG_SIZE}G, VG libre: ${VG_FREE}G, LV actual: ${LV_SIZE}G"
+      
       # Paso 2: Expandir el Logical Volume
       echo "Expandiendo Logical Volume..."
+      
+      # Intentar primero con +100%FREE
       LV_EXTEND_OUTPUT=$(exec_in_vm "lvextend -l +100%FREE $LV_PATH 2>&1" 2>/dev/null)
       LV_EXTEND_EXIT=$?
+      
+      # Si falla porque no hay espacio libre, intentar expandir al 100% del VG
+      if [ $LV_EXTEND_EXIT -ne 0 ] && echo "$LV_EXTEND_OUTPUT" | grep -q "matches existing size"; then
+        echo "  No hay espacio libre en VG, expandiendo al tamaño máximo del VG..."
+        LV_EXTEND_OUTPUT=$(exec_in_vm "lvextend -l 100%VG $LV_PATH 2>&1" 2>/dev/null)
+        LV_EXTEND_EXIT=$?
+      fi
+      
+      # Si aún falla, intentar con tamaño específico basado en el espacio libre del VG
+      if [ $LV_EXTEND_EXIT -ne 0 ] && [ -n "$VG_FREE" ] && [ "$VG_FREE" != "0" ]; then
+        echo "  Intentando expandir con el espacio libre detectado..."
+        LV_EXTEND_OUTPUT=$(exec_in_vm "lvextend -L +${VG_FREE}G $LV_PATH 2>&1" 2>/dev/null)
+        LV_EXTEND_EXIT=$?
+      fi
       
       if [ $LV_EXTEND_EXIT -eq 0 ]; then
         echo "✓ LV expandido correctamente."
@@ -123,9 +147,12 @@ for VMID in "${VMS[@]}"; do
         fi
       else
         echo "⚠ Error al expandir LV: $LV_EXTEND_OUTPUT"
+        echo "Estado del VG:"
+        exec_in_vm "vgs $VG_NAME && lvs $VG_NAME/$LV_NAME" 2>/dev/null
+        echo ""
         echo "Comandos manuales:"
         echo "  pvresize $PV_NAME"
-        echo "  lvextend -l +100%FREE $LV_PATH"
+        echo "  lvextend -l 100%VG $LV_PATH"
         echo "  resize2fs $LV_PATH"
       fi
     else
