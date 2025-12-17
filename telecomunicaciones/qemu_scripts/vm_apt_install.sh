@@ -64,7 +64,7 @@ wait_for_pid() {
     while [ $count -lt $timeout ]; do
         sleep 1
         local status=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $pid --output-format json 2>/dev/null || echo "")
-        if echo "$status" | grep -q '"exited"'; then
+        if echo "$status" | grep -q '"exited":[[:space:]]*1'; then
             echo "$status"
             return 0
         fi
