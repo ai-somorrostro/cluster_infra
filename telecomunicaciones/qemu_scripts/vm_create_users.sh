@@ -4,17 +4,27 @@
 
 set -e
 
-if [ $# -lt 3 ]; then
-    echo "Uso: $0 <nodo> <fichero_usuarios> <vmid1> [vmid2] ..."
-    echo "Ejemplo: $0 pve-node-3 usuarios.txt 127 128"
+# Parse --nopass flag
+FORCE_PASSWORD_CHANGE=1
+if [ "$1" = "--nopass" ]; then
+    FORCE_PASSWORD_CHANGE=0
+    shift 1
+fi
+
+if [ $# -lt 2 ]; then
+    echo "Uso: $0 [--nopass] <fichero_usuarios> <vmid1> [vmid2] ..."
+    echo "Ejemplo: $0 usuarios.txt 127 128"
+    echo "Ejemplo (sin expirar password): $0 --nopass usuarios.txt 127 128"
     echo ""
     echo "Formato fichero: usuario:password (uno por línea)"
+    echo ""
+    echo "Opciones:"
+    echo "  --nopass    No fuerza el cambio de contraseña en el primer login"
     exit 1
 fi
 
-NODE=$1
-USER_FILE=$2
-shift 2
+USER_FILE=$1
+shift 1
 VMIDS=("$@")
 
 if [ ! -f "$USER_FILE" ]; then
@@ -63,9 +73,26 @@ run_cmd() {
 # --- Loop por VM ---
 for VMID in "${VMIDS[@]}"; do
     echo -e "\n${YELLOW}=========================================="
-    echo "VM $VMID"
+    echo "Detectando ubicación de la VM $VMID..."
+
+    # Detectar nodo y nombre de la VM
+    VM_INFO=$(pvesh get /cluster/resources --type vm --output-format json | \
+      python3 -c "import sys, json; \
+      vms = json.load(sys.stdin); \
+      vm = next((i for i in vms if i.get('vmid') == $VMID), None); \
+      print(f\"{vm.get('node', 'N/A')}|{vm.get('name', 'N/A')}\") if vm else print('N/A|N/A')")
+
+    NODE=$(echo "$VM_INFO" | cut -d'|' -f1)
+    VM_NAME=$(echo "$VM_INFO" | cut -d'|' -f2)
+
+    if [ "$NODE" = "N/A" ] || [ -z "$NODE" ]; then
+      echo -e "${RED}[✗]${NC} No se encuentra la VM $VMID en ningun nodo del cluster."
+      continue
+    fi
+
+    echo "Nodo: $NODE | Nombre: $VM_NAME | VMID: $VMID"
     echo -e "==========================================${NC}"
-    
+
     # Verificar estado
     VM_STATUS=$(pvesh get /nodes/$NODE/qemu/$VMID/status/current --output-format json 2>/dev/null)
     if ! echo "$VM_STATUS" | grep -q '"status":"running"' || ! echo "$VM_STATUS" | grep -q '"agent":1'; then
@@ -161,15 +188,19 @@ for VMID in "${VMIDS[@]}"; do
                 echo -e "${YELLOW}[WARN]${NC}"
             fi
         fi
-        
-        # Expirar contraseña para forzar cambio en primer login
-        echo -n "  • Expirar password... "
-        if run_cmd "passwd" "--expire" "$username"; then
-            echo -e "${GREEN}[OK]${NC}"
+
+        # Expirar contraseña para forzar cambio en primer login (si no se especificó --nopass)
+        if [ $FORCE_PASSWORD_CHANGE -eq 1 ]; then
+            echo -n "  • Expirar password... "
+            if run_cmd "passwd" "--expire" "$username"; then
+                echo -e "${GREEN}[OK]${NC}"
+            else
+                echo -e "${YELLOW}[WARN]${NC}"
+            fi
         else
-            echo -e "${YELLOW}[WARN]${NC}"
+            echo -e "  • Password no expirado (--nopass activo)"
         fi
-        
+
         echo ""
     done < "$USER_FILE"
 done
