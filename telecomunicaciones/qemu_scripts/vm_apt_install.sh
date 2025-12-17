@@ -91,12 +91,17 @@ run_cmd() {
     local pid=$(echo "$out" | grep -oP '"pid":\K[0-9]+')
 
     if [ -z "$pid" ]; then
+        echo "[DEBUG] No se pudo obtener PID" >&2
         return 1
     fi
 
+    echo "[DEBUG] PID obtenido: $pid" >&2
+
     # Esperar (timeout 120s por defecto para dar tiempo a apt)
     local res=$(wait_for_pid $pid 120)
+    echo "[DEBUG] Respuesta wait_for_pid: $res" >&2
     local exitcode=$(echo "$res" | grep -oP '"exitcode":\K[0-9]+' || echo "1")
+    echo "[DEBUG] Exitcode extraído: $exitcode" >&2
     return $exitcode
 }
 
