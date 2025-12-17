@@ -100,6 +100,43 @@ run_cmd() {
     return $exitcode
 }
 
+# Ejecutar comando y mostrar output/error
+run_cmd_verbose() {
+    local cmd_arr=("$@")
+    local pvesh_args=""
+    for arg in "${cmd_arr[@]}"; do
+        local escaped_arg=$(echo "$arg" | sed 's/"/\\"/g')
+        pvesh_args="$pvesh_args --command \"$escaped_arg\""
+    done
+
+    local out=$(eval pvesh create /nodes/$NODE/qemu/$VMID/agent/exec $pvesh_args --output-format json 2>/dev/null)
+    local pid=$(echo "$out" | grep -oP '"pid":\K[0-9]+')
+
+    if [ -z "$pid" ]; then
+        echo -e "${RED}Error: No se pudo ejecutar el comando${NC}"
+        return 1
+    fi
+
+    local res=$(wait_for_pid $pid 120)
+    local exitcode=$(echo "$res" | grep -oP '"exitcode":\K[0-9]+' || echo "1")
+
+    # Extraer y decodificar stdout y stderr
+    local stdout=$(echo "$res" | grep -oP '"out-data":"\K[^"]*' | base64 -d 2>/dev/null || echo "")
+    local stderr=$(echo "$res" | grep -oP '"err-data":"\K[^"]*' | base64 -d 2>/dev/null || echo "")
+
+    if [ -n "$stdout" ]; then
+        echo -e "${YELLOW}STDOUT:${NC}"
+        echo "$stdout"
+    fi
+
+    if [ -n "$stderr" ]; then
+        echo -e "${RED}STDERR:${NC}"
+        echo "$stderr"
+    fi
+
+    return $exitcode
+}
+
 # Instalar Docker usando el método oficial
 install_docker() {
     echo -e "\n${YELLOW}[*]${NC} Instalando Docker (método oficial)..."
@@ -247,10 +284,10 @@ for VMID in "${VMIDS[@]}"; do
 
     # 4. Actualizar apt
     echo -e "\n${YELLOW}[*]${NC} Actualizando cache de apt..."
-    if run_cmd "apt-get" "update"; then
+    if run_cmd_verbose "apt-get" "update"; then
         echo -e "${GREEN}[✓]${NC} Cache actualizado"
     else
-        echo -e "${RED}[✗]${NC} Error en apt update"
+        echo -e "${RED}[✗]${NC} Error en apt update (ver detalles arriba)"
         continue
     fi
 
