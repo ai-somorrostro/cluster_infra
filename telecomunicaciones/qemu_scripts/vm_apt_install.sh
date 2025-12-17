@@ -120,18 +120,18 @@ run_cmd_verbose() {
     local res=$(wait_for_pid $pid 120)
     local exitcode=$(echo "$res" | grep -oP '"exitcode":\K[0-9]+' || echo "1")
 
-    # Extraer y decodificar stdout y stderr
-    local stdout=$(echo "$res" | grep -oP '"out-data":"\K[^"]*' | base64 -d 2>/dev/null || echo "")
-    local stderr=$(echo "$res" | grep -oP '"err-data":"\K[^"]*' | base64 -d 2>/dev/null || echo "")
+    # Extraer stdout y stderr (ya están en texto plano, no base64)
+    local stdout=$(echo "$res" | grep -oP '"out-data":"\K[^"]*' | sed 's/\\n/\n/g')
+    local stderr=$(echo "$res" | grep -oP '"err-data":"\K[^"]*' | sed 's/\\n/\n/g')
 
     if [ -n "$stdout" ]; then
         echo -e "${YELLOW}STDOUT:${NC}"
-        echo "$stdout"
+        echo -e "$stdout"
     fi
 
     if [ -n "$stderr" ]; then
         echo -e "${RED}STDERR:${NC}"
-        echo "$stderr"
+        echo -e "$stderr"
     fi
 
     return $exitcode
