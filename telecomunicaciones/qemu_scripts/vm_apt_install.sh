@@ -60,7 +60,7 @@ wait_for_pid() {
     local pid=$1
     local timeout=$2
     local count=0
-    
+
     while [ $count -lt $timeout ]; do
         sleep 1
         local status=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $pid --output-format json 2>/dev/null || echo "")
@@ -68,10 +68,10 @@ wait_for_pid() {
             echo "$status"
             return 0
         fi
-        echo -n "."
+        echo -n "." >&2
         count=$((count+1))
     done
-    echo ""
+    echo "" >&2
     return 1
 }
 
@@ -284,10 +284,10 @@ for VMID in "${VMIDS[@]}"; do
 
     # 4. Actualizar apt
     echo -e "\n${YELLOW}[*]${NC} Actualizando cache de apt..."
-    if run_cmd_verbose "apt-get" "update"; then
+    if run_cmd "apt-get" "update"; then
         echo -e "${GREEN}[✓]${NC} Cache actualizado"
     else
-        echo -e "${RED}[✗]${NC} Error en apt update (ver detalles arriba)"
+        echo -e "${RED}[✗]${NC} Error en apt update"
         continue
     fi
 
