@@ -4,22 +4,39 @@
 
 set -e
 
-# Parse --nopass flag
+# Parse flags
 FORCE_PASSWORD_CHANGE=1
-if [ "$1" = "--nopass" ]; then
-    FORCE_PASSWORD_CHANGE=0
-    shift 1
-fi
+ADD_TO_DOCKER=0
+
+while [[ "$1" =~ ^-- ]]; do
+    case "$1" in
+        --nopass)
+            FORCE_PASSWORD_CHANGE=0
+            shift 1
+            ;;
+        --add-to-docker)
+            ADD_TO_DOCKER=1
+            shift 1
+            ;;
+        *)
+            echo "Opción desconocida: $1"
+            exit 1
+            ;;
+    esac
+done
 
 if [ $# -lt 2 ]; then
-    echo "Uso: $0 [--nopass] <fichero_usuarios> <vmid1> [vmid2] ..."
+    echo "Uso: $0 [--nopass] [--add-to-docker] <fichero_usuarios> <vmid1> [vmid2] ..."
     echo "Ejemplo: $0 usuarios.txt 127 128"
     echo "Ejemplo (sin expirar password): $0 --nopass usuarios.txt 127 128"
+    echo "Ejemplo (añadir a docker): $0 --add-to-docker usuarios.txt 127 128"
+    echo "Ejemplo (ambas opciones): $0 --nopass --add-to-docker usuarios.txt 127 128"
     echo ""
     echo "Formato fichero: usuario:password (uno por línea)"
     echo ""
     echo "Opciones:"
-    echo "  --nopass    No fuerza el cambio de contraseña en el primer login"
+    echo "  --nopass         No fuerza el cambio de contraseña en el primer login"
+    echo "  --add-to-docker  Añade todos los usuarios al grupo docker"
     exit 1
 fi
 
@@ -119,14 +136,17 @@ for VMID in "${VMIDS[@]}"; do
     sleep 2
     echo -e "${GREEN}[OK]${NC}"
     
-    # Verificar si docker existe
-    echo -n "Verificando docker... "
-    if run_cmd "getent" "group" "docker"; then
-        DOCKER_EXISTS=1
-        echo -e "${GREEN}[OK]${NC}"
-    else
-        DOCKER_EXISTS=0
-        echo "[No existe]"
+    # Verificar si docker existe (si se solicitó añadir a docker)
+    DOCKER_EXISTS=0
+    if [ $ADD_TO_DOCKER -eq 1 ]; then
+        echo -n "Verificando docker... "
+        if run_cmd "getent" "group" "docker"; then
+            DOCKER_EXISTS=1
+            echo -e "${GREEN}[OK]${NC}"
+        else
+            echo -e "${RED}[No existe]${NC}"
+            echo -e "${YELLOW}[!]${NC} Se solicitó --add-to-docker pero el grupo docker no existe en la VM"
+        fi
     fi
     
     echo ""
