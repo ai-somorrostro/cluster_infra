@@ -3,10 +3,18 @@
 # vm_apt_install.sh - Instala paquetes apt en una o varias VMs usando pvesh
 
 if [ $# -lt 3 ]; then
-    echo "Uso: $0 <vmid1> [vmid2] ... -- <paquete1> [paquete2] [paquete3] ..."
+    echo "Uso: $0 [--with-docker] <vmid1> [vmid2] ... -- <paquete1> [paquete2] [paquete3] ..."
     echo "Ejemplo: $0 100 101 102 -- vim curl htop"
     echo "Ejemplo: $0 100 -- vim curl htop"
+    echo "Ejemplo: $0 --with-docker 100 -- vim curl htop"
     exit 1
+fi
+
+# Verificar si se solicita instalación de Docker
+INSTALL_DOCKER=0
+if [ "$1" = "--with-docker" ]; then
+    INSTALL_DOCKER=1
+    shift
 fi
 
 # Separar VMIDs y paquetes usando -- como delimitador
@@ -77,19 +85,87 @@ run_cmd() {
         local escaped_arg=$(echo "$arg" | sed 's/"/\\"/g')
         pvesh_args="$pvesh_args --command \"$escaped_arg\""
     done
-    
+
     # Ejecutar con eval para procesar las comillas correctamente
     local out=$(eval pvesh create /nodes/$NODE/qemu/$VMID/agent/exec $pvesh_args --output-format json 2>/dev/null)
     local pid=$(echo "$out" | grep -oP '"pid":\K[0-9]+')
-    
+
     if [ -z "$pid" ]; then
         return 1
     fi
-    
+
     # Esperar (timeout 120s por defecto para dar tiempo a apt)
     local res=$(wait_for_pid $pid 120)
     local exitcode=$(echo "$res" | grep -oP '"exitcode":\K[0-9]+' || echo "1")
     return $exitcode
+}
+
+# Instalar Docker usando el método oficial
+install_docker() {
+    echo -e "\n${YELLOW}[*]${NC} Instalando Docker (método oficial)..."
+
+    # 1. Instalar prerequisitos
+    echo -e "${YELLOW}[*]${NC} Instalando prerequisitos..."
+    local PREREQ_CMD="DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl"
+    if ! run_cmd "sh" "-c" "$PREREQ_CMD"; then
+        echo -e "${RED}[✗]${NC} Error instalando prerequisitos"
+        return 1
+    fi
+    echo -e "${GREEN}[✓]${NC} Prerequisitos instalados"
+
+    # 2. Crear directorio para GPG key
+    echo -e "${YELLOW}[*]${NC} Configurando repositorio de Docker..."
+    if ! run_cmd "install" "-m" "0755" "-d" "/etc/apt/keyrings"; then
+        echo -e "${RED}[✗]${NC} Error creando directorio keyrings"
+        return 1
+    fi
+
+    # 3. Descargar y añadir GPG key
+    local GPG_CMD="curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc"
+    if ! run_cmd "sh" "-c" "$GPG_CMD"; then
+        echo -e "${RED}[✗]${NC} Error descargando GPG key de Docker"
+        return 1
+    fi
+
+    if ! run_cmd "chmod" "a+r" "/etc/apt/keyrings/docker.asc"; then
+        echo -e "${RED}[✗]${NC} Error configurando permisos de GPG key"
+        return 1
+    fi
+
+    # 4. Añadir repositorio de Docker
+    local REPO_CMD='echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list'
+    if ! run_cmd "sh" "-c" "$REPO_CMD"; then
+        echo -e "${RED}[✗]${NC} Error añadiendo repositorio de Docker"
+        return 1
+    fi
+    echo -e "${GREEN}[✓]${NC} Repositorio configurado"
+
+    # 5. Actualizar apt
+    echo -e "${YELLOW}[*]${NC} Actualizando cache de apt..."
+    if ! run_cmd "apt-get" "update"; then
+        echo -e "${RED}[✗]${NC} Error actualizando apt"
+        return 1
+    fi
+    echo -e "${GREEN}[✓]${NC} Cache actualizado"
+
+    # 6. Instalar Docker
+    echo -e "${YELLOW}[*]${NC} Instalando paquetes de Docker..."
+    local DOCKER_CMD="DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+    if ! run_cmd "sh" "-c" "$DOCKER_CMD"; then
+        echo -e "${RED}[✗]${NC} Error instalando Docker"
+        return 1
+    fi
+    echo -e "${GREEN}[✓]${NC} Docker instalado"
+
+    # 7. Verificar instalación
+    echo -e "${YELLOW}[*]${NC} Verificando instalación de Docker..."
+    if run_cmd "docker" "--version"; then
+        echo -e "${GREEN}[✓]${NC} Docker instalado correctamente"
+        return 0
+    else
+        echo -e "${RED}[✗]${NC} Docker no responde correctamente"
+        return 1
+    fi
 }
 
 # --- Inicio Script ---
@@ -197,6 +273,11 @@ for VMID in "${VMIDS[@]}"; do
              echo -e "${RED}[✗]${NC} $PKG no parece estar instalado"
         fi
     done
+
+    # 7. Instalar Docker si se solicitó
+    if [ $INSTALL_DOCKER -eq 1 ]; then
+        install_docker
+    fi
 
     echo -e "\n${YELLOW}[*]${NC} VM $VMID procesada"
 done
