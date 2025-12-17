@@ -284,7 +284,7 @@ for VMID in "${VMIDS[@]}"; do
 
     # 4. Actualizar apt
     echo -e "\n${YELLOW}[*]${NC} Actualizando cache de apt..."
-    if run_cmd "apt-get" "update"; then
+    if run_cmd "sh" "-c" "apt-get update"; then
         echo -e "${GREEN}[✓]${NC} Cache actualizado"
     else
         echo -e "${RED}[✗]${NC} Error en apt update"
