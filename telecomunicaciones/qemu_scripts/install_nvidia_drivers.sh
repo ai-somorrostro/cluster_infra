@@ -24,7 +24,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Paso 1: Verificar que la GPU está detectada
-echo -e "${YELLOW}[1/7]${NC} Verificando hardware NVIDIA..."
+echo -e "${YELLOW}[1/8]${NC} Verificando hardware NVIDIA..."
 if lspci | grep -i nvidia > /dev/null; then
     echo -e "${GREEN}✓${NC} GPU NVIDIA detectada:"
     lspci | grep -i nvidia
@@ -37,15 +37,14 @@ else
 fi
 echo ""
 
-# Paso 2: Actualizar sistema
-echo -e "${YELLOW}[2/7]${NC} Actualizando sistema..."
+# Paso 2: Actualizar lista de paquetes
+echo -e "${YELLOW}[2/8]${NC} Actualizando lista de paquetes..."
 apt update
-apt upgrade -y
-echo -e "${GREEN}✓${NC} Sistema actualizado"
+echo -e "${GREEN}✓${NC} Lista de paquetes actualizada"
 echo ""
 
 # Paso 3: Instalar dependencias
-echo -e "${YELLOW}[3/7]${NC} Instalando dependencias..."
+echo -e "${YELLOW}[3/8]${NC} Instalando dependencias..."
 apt install -y \
     build-essential \
     dkms \
@@ -58,7 +57,7 @@ echo -e "${GREEN}✓${NC} Dependencias instaladas"
 echo ""
 
 # Paso 4: Detectar y recomendar driver
-echo -e "${YELLOW}[4/7]${NC} Detectando driver recomendado..."
+echo -e "${YELLOW}[4/8]${NC} Detectando driver recomendado..."
 RECOMMENDED_DRIVER=$(ubuntu-drivers devices | grep -i recommended | awk '{print $3}' | head -1)
 
 if [ -z "$RECOMMENDED_DRIVER" ]; then
@@ -72,14 +71,14 @@ fi
 echo ""
 
 # Paso 5: Instalar driver
-echo -e "${YELLOW}[5/7]${NC} Instalando driver NVIDIA ($DRIVER_VERSION)..."
+echo -e "${YELLOW}[5/8]${NC} Instalando driver NVIDIA ($DRIVER_VERSION)..."
 echo "Esto puede tardar varios minutos..."
 apt install -y "$DRIVER_VERSION"
 echo -e "${GREEN}✓${NC} Driver instalado"
 echo ""
 
 # Paso 6: Verificar instalación
-echo -e "${YELLOW}[6/7]${NC} Verificando instalación..."
+echo -e "${YELLOW}[6/8]${NC} Verificando instalación..."
 if nvidia-smi > /dev/null 2>&1; then
     echo -e "${GREEN}✓${NC} Driver funcionando correctamente:"
     nvidia-smi
@@ -91,7 +90,7 @@ fi
 echo ""
 
 # Paso 7: Configuración adicional
-echo -e "${YELLOW}[7/7]${NC} Configuración adicional..."
+echo -e "${YELLOW}[7/8]${NC} Configuración adicional..."
 
 # Crear archivo de configuración para evitar modo de persistencia (opcional)
 cat > /etc/modprobe.d/nvidia.conf << EOF
@@ -102,6 +101,20 @@ EOF
 echo -e "${GREEN}✓${NC} Configuración aplicada"
 echo ""
 
+# Paso 8: Instalar CUDA Toolkit
+echo -e "${YELLOW}[8/8]${NC} Instalando CUDA Toolkit..."
+echo "Esto puede tardar varios minutos..."
+apt install -y nvidia-cuda-toolkit
+echo -e "${GREEN}✓${NC} CUDA Toolkit instalado"
+echo ""
+
+# Verificar versión de CUDA
+if command -v nvcc > /dev/null 2>&1; then
+    echo "Versión de CUDA instalada:"
+    nvcc --version
+    echo ""
+fi
+
 # Resumen
 echo "=========================================="
 echo -e "${GREEN}Instalación completada${NC}"
@@ -110,7 +123,7 @@ echo ""
 echo "Próximos pasos:"
 echo "1. Reinicia el sistema: sudo reboot"
 echo "2. Después del reinicio, verifica con: nvidia-smi"
-echo "3. Si necesitas CUDA, instala: sudo apt install nvidia-cuda-toolkit"
+echo "3. Verifica CUDA con: nvcc --version"
 echo ""
 echo "Para verificar sin reiniciar (puede no funcionar):"
 echo "  sudo modprobe nvidia"
