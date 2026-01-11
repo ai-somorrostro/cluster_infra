@@ -115,6 +115,21 @@ if command -v nvcc > /dev/null 2>&1; then
     echo ""
 fi
 
+# Instalar nvtop para monitoreo de GPU
+echo -e "${YELLOW}[Extra]${NC} Instalando nvtop para monitoreo de GPU..."
+if apt install -y nvtop 2>/dev/null; then
+    echo -e "${GREEN}✓${NC} nvtop instalado desde repositorios"
+else
+    echo -e "${YELLOW}⚠${NC} nvtop no disponible en repositorios, instalando dependencias para compilar..."
+    apt install -y cmake libncurses5-dev libncursesw5-dev git
+    echo "Para instalar nvtop desde source, ejecuta:"
+    echo "  git clone https://github.com/Syllo/nvtop.git"
+    echo "  mkdir -p nvtop/build && cd nvtop/build"
+    echo "  cmake .. -DNVML_RETRIEVE_HEADER_ONLINE=true"
+    echo "  make && sudo make install"
+fi
+echo ""
+
 # Resumen
 echo "=========================================="
 echo -e "${GREEN}Instalación completada${NC}"
@@ -124,6 +139,7 @@ echo "Próximos pasos:"
 echo "1. Reinicia el sistema: sudo reboot"
 echo "2. Después del reinicio, verifica con: nvidia-smi"
 echo "3. Verifica CUDA con: nvcc --version"
+echo "4. Monitorea GPU con: nvtop"
 echo ""
 echo "Para verificar sin reiniciar (puede no funcionar):"
 echo "  sudo modprobe nvidia"
