@@ -2,10 +2,11 @@
 # vram_killer.sh
 # Script to kill processes when TOTAL VRAM of all processes exceeds a limit
 # Kills the most recent process that caused the excess
+# VRAM values are in MiB (mebibytes) as reported by nvidia-smi
 # 
-# Usage: ./vram_killer.sh <limit_mb> [check_interval]
-# Example: ./vram_killer.sh 4096 5
-#          (if sum of VRAM of all processes > 4GB, kills latest process, checks every 5s)
+# Usage: ./vram_killer.sh <limit_mib> [check_interval]
+# Example: ./vram_killer.sh 8192 5
+#          (if sum of VRAM of all processes > 8192 MiB, kills latest process, checks every 5s)
 
 set -e
 
@@ -14,7 +15,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-LIMIT_MB=${1:-4096}
+LIMIT_MIB=${1:-8192}
 CHECK_INTERVAL=${2:-5}
 LOG_FILE="/var/log/vram_killer.log"
 
@@ -43,7 +44,7 @@ kill_process() {
     local vram=$2
     local cmd=$(ps -p $pid -o cmd= 2>/dev/null | head -c 100)
     
-    log "KILLING PID $pid - VRAM: ${vram}MB - CMD: $cmd"
+    log "KILLING PID $pid - VRAM: ${vram} MiB - CMD: $cmd"
     kill -9 $pid 2>/dev/null || true
     sleep 1
     
@@ -57,7 +58,7 @@ kill_process() {
 
 # Función principal de monitoreo
 monitor_vram() {
-    log "Starting VRAM monitoring - Total limit: ${LIMIT_MB}MB - Check interval: ${CHECK_INTERVAL}s"
+    log "Starting VRAM monitoring - Total limit: ${LIMIT_MIB} MiB - Check interval: ${CHECK_INTERVAL}s"
     log "Strategy: Sum VRAM of all processes, kill the latest one if limit exceeded"
     
     while true; do
@@ -65,22 +66,22 @@ monitor_vram() {
         TEMP_FILE=$(mktemp)
         TOTAL_VRAM=0
         
-        # Obtener todos los procesos que usan GPU y su VRAM
-        nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits 2>/dev/null | while IFS=',' read -r pid vram_mb; do
+        # Obtener todos los procesos que usan GPU y su VRAM (nvidia-smi devuelve valores en MiB)
+        nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits 2>/dev/null | while IFS=',' read -r pid vram_mib; do
             # Limpiar espacios
             pid=$(echo "$pid" | xargs)
-            vram_mb=$(echo "$vram_mb" | xargs)
+            vram_mib=$(echo "$vram_mib" | xargs)
             
             # Saltar si está vacío
-            [ -z "$pid" ] || [ -z "$vram_mb" ] && continue
+            [ -z "$pid" ] || [ -z "$vram_mib" ] && continue
             
             # Verificar que el proceso existe
             ps -p "$pid" > /dev/null 2>&1 || continue
             
-            # Guardar en archivo temporal: PID,VRAM,CREATETIME
+            # Guardar en archivo temporal: PID,VRAM_MIB,CREATETIME
             # Usar tiempo de creación del proceso desde /proc (más confiable)
             create_time=$(stat -c %Y /proc/$pid 2>/dev/null || echo "0")
-            echo "$pid,$vram_mb,$create_time" >> "$TEMP_FILE"
+            echo "$pid,$vram_mib,$create_time" >> "$TEMP_FILE"
         done
         
         # Si no hay procesos, continuar
@@ -91,17 +92,17 @@ monitor_vram() {
         fi
         
         # Calcular VRAM total
-        while IFS=',' read -r pid vram_mb create_time; do
-            TOTAL_VRAM=$((TOTAL_VRAM + vram_mb))
+        while IFS=',' read -r pid vram_mib create_time; do
+            TOTAL_VRAM=$((TOTAL_VRAM + vram_mib))
         done < "$TEMP_FILE"
         
         # Log current status
         PROCESS_COUNT=$(wc -l < "$TEMP_FILE")
-        log "Processes using GPU: $PROCESS_COUNT | Total VRAM: ${TOTAL_VRAM}MB / ${LIMIT_MB}MB"
+        log "Processes using GPU: $PROCESS_COUNT | Total VRAM: ${TOTAL_VRAM} MiB / ${LIMIT_MIB} MiB"
         
         # Si la suma total excede el límite, matar el último proceso
-        if [ "$TOTAL_VRAM" -gt "$LIMIT_MB" ]; then
-            log "WARNING: Limit exceeded! Total VRAM: ${TOTAL_VRAM}MB > ${LIMIT_MB}MB"
+        if [ "$TOTAL_VRAM" -gt "$LIMIT_MIB" ]; then
+            log "WARNING: Limit exceeded! Total VRAM: ${TOTAL_VRAM} MiB > ${LIMIT_MIB} MiB"
             
             # Encontrar el proceso más reciente (último que se inició)
             # Ordenar por tiempo de creación (más reciente = número más alto)
@@ -109,11 +110,11 @@ monitor_vram() {
             LATEST_VRAM=0
             LATEST_TIME=0
             
-            while IFS=',' read -r pid vram_mb create_time; do
+            while IFS=',' read -r pid vram_mib create_time; do
                 # Comparar tiempos (más reciente = mayor número)
                 if [ "$create_time" -gt "$LATEST_TIME" ] 2>/dev/null; then
                     LATEST_PID="$pid"
-                    LATEST_VRAM="$vram_mb"
+                    LATEST_VRAM="$vram_mib"
                     LATEST_TIME="$create_time"
                 fi
             done < "$TEMP_FILE"
@@ -121,10 +122,10 @@ monitor_vram() {
             # Si no se pudo determinar por tiempo, usar el que más VRAM usa
             if [ -z "$LATEST_PID" ] || [ "$LATEST_PID" == "0" ]; then
                 LATEST_TIME=0
-                while IFS=',' read -r pid vram_mb create_time; do
-                    if [ "$vram_mb" -gt "$LATEST_VRAM" ] 2>/dev/null; then
+                while IFS=',' read -r pid vram_mib create_time; do
+                    if [ "$vram_mib" -gt "$LATEST_VRAM" ] 2>/dev/null; then
                         LATEST_PID="$pid"
-                        LATEST_VRAM="$vram_mb"
+                        LATEST_VRAM="$vram_mib"
                         LATEST_TIME="$create_time"
                     fi
                 done < "$TEMP_FILE"
@@ -132,7 +133,7 @@ monitor_vram() {
             
             # Matar el proceso identificado
             if [ -n "$LATEST_PID" ] && [ "$LATEST_PID" -gt 0 ] 2>/dev/null; then
-                log "Killing latest process: PID $LATEST_PID (VRAM: ${LATEST_VRAM}MB)"
+                log "Killing latest process: PID $LATEST_PID (VRAM: ${LATEST_VRAM} MiB)"
                 kill_process "$LATEST_PID" "$LATEST_VRAM"
             else
                 log "ERROR: Could not identify process to kill"
@@ -155,16 +156,17 @@ if [ -z "$1" ] || [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
     echo "Usage: $0 <limite_mb> [check_interval]"
     echo ""
     echo "Arguments:"
-    echo "  limite_mb      - Total VRAM limit in MB for all processes (e.g., 4096 for 4GB)"
+    echo "  limit_mib      - Total VRAM limit in MiB (mebibytes) for all processes"
+    echo "                   Examples: 8192 MiB = 8 GiB, 4096 MiB = 4 GiB"
     echo "  check_interval - Check interval in seconds (default: 5)"
     echo ""
     echo "How it works:"
-    echo "  - Sums VRAM of ALL processes using GPU"
+    echo "  - Sums VRAM of ALL processes using GPU (values in MiB from nvidia-smi)"
     echo "  - If sum exceeds limit, kills the LATEST process"
     echo ""
     echo "Examples:"
-    echo "  $0 4096        # If total VRAM > 4GB, kills latest process, checks every 5s"
-    echo "  $0 2048 10    # If total VRAM > 2GB, kills latest process, checks every 10s"
+    echo "  $0 8192        # If total VRAM > 8192 MiB (8 GiB), kills latest process, checks every 5s"
+    echo "  $0 4096 10    # If total VRAM > 4096 MiB (4 GiB), kills latest process, checks every 10s"
     echo ""
     echo "To run as service:"
     echo "  sudo systemctl start vram-killer"
@@ -175,7 +177,7 @@ fi
 # Verificar que se ejecuta como root para poder matar procesos
 if [ "$EUID" -ne 0 ]; then 
     echo -e "${RED}Error: This script must be run as root to kill processes${NC}"
-    echo "Use: sudo $0 $LIMIT_MB $CHECK_INTERVAL"
+    echo "Use: sudo $0 $LIMIT_MIB $CHECK_INTERVAL"
     exit 1
 fi
 
