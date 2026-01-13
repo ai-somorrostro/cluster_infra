@@ -19,11 +19,22 @@ LOG_FILE="/var/log/vram_killer.log"
 
 # Si el primer argumento es "daemon", saltarlo (viene de systemd)
 if [ "$1" == "daemon" ]; then
-    LIMIT_MIB_RAW=${2:-8192}
-    CHECK_INTERVAL_MS_RAW=${3:-5000}
+    shift  # Eliminar "daemon" de los argumentos
+    LIMIT_MIB_RAW=${1:-8192}
+    CHECK_INTERVAL_MS_RAW=${2:-5000}
 else
     LIMIT_MIB_RAW=${1:-8192}
     CHECK_INTERVAL_MS_RAW=${2:-5000}
+fi
+
+# Validar que tenemos argumentos válidos (no pueden ser "daemon" o vacíos)
+if [ -z "$LIMIT_MIB_RAW" ] || [ "$LIMIT_MIB_RAW" == "daemon" ]; then
+    echo "ERROR: Invalid LIMIT_MIB_RAW='$LIMIT_MIB_RAW'. All args: $@" >&2
+    exit 1
+fi
+if [ -z "$CHECK_INTERVAL_MS_RAW" ] || [ "$CHECK_INTERVAL_MS_RAW" == "daemon" ]; then
+    echo "ERROR: Invalid CHECK_INTERVAL_MS_RAW='$CHECK_INTERVAL_MS_RAW'. All args: $@" >&2
+    exit 1
 fi
 
 # Convertir a decimal para evitar interpretación octal (ej: 0500 -> 500)
