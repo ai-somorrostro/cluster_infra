@@ -16,8 +16,13 @@ LIMIT_MIB_RAW=${1:-8192}
 CHECK_INTERVAL_MS_RAW=${2:-5000}
 
 # Convertir a decimal para evitar interpretación octal (ej: 0500 -> 500)
-LIMIT_MIB=$((10#$LIMIT_MIB_RAW))
-CHECK_INTERVAL_MS=$((10#$CHECK_INTERVAL_MS_RAW))
+# Usar sed para quitar ceros iniciales
+LIMIT_MIB=$(echo "$LIMIT_MIB_RAW" | sed 's/^0*//')
+CHECK_INTERVAL_MS=$(echo "$CHECK_INTERVAL_MS_RAW" | sed 's/^0*//')
+
+# Si quedó vacío después de quitar ceros, usar valores por defecto
+[ -z "$LIMIT_MIB" ] && LIMIT_MIB=8192
+[ -z "$CHECK_INTERVAL_MS" ] && CHECK_INTERVAL_MS=5000
 
 # Verificar root
 if [ "$EUID" -ne 0 ]; then 

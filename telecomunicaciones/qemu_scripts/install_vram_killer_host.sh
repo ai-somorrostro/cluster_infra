@@ -15,10 +15,6 @@ VMID=$1
 LIMIT_MIB_RAW=$2
 CHECK_INTERVAL_MS_RAW=${3:-5000}
 
-# Convertir a decimal para evitar interpretación octal (ej: 0500 -> 500)
-LIMIT_MIB=$((10#$LIMIT_MIB_RAW))
-CHECK_INTERVAL_MS=$((10#$CHECK_INTERVAL_MS_RAW))
-
 # Verificar root
 if [ "$EUID" -ne 0 ]; then 
     echo -e "${RED}Error: This script must be run as root${NC}"
@@ -39,6 +35,15 @@ if [ -z "$VMID" ] || [ -z "$LIMIT_MIB_RAW" ] || [ "$1" == "--help" ] || [ "$1" =
     echo "  $0 121 8192 2000    # Install in VM 121 with 8192 MiB (8 GiB) limit, check every 2000ms (2s)"
     exit 0
 fi
+
+# Convertir a decimal para evitar interpretación octal (ej: 0500 -> 500)
+# Usar sed para quitar ceros iniciales o forzar base 10
+LIMIT_MIB=$(echo "$LIMIT_MIB_RAW" | sed 's/^0*//')
+CHECK_INTERVAL_MS=$(echo "$CHECK_INTERVAL_MS_RAW" | sed 's/^0*//')
+
+# Si quedó vacío después de quitar ceros, usar 0
+[ -z "$LIMIT_MIB" ] && LIMIT_MIB=0
+[ -z "$CHECK_INTERVAL_MS" ] && CHECK_INTERVAL_MS=5000
 
 # Detectar nodo
 echo -e "${YELLOW}[*]${NC} Detecting node for VM $VMID..."
@@ -108,28 +113,55 @@ echo -e "${YELLOW}[*]${NC} Copying scripts to VM..."
 
 # Crear directorio temporal en la VM
 TMP_DIR="/tmp/vram_killer_install"
-exec_in_vm "mkdir -p $TMP_DIR" >/dev/null 2>&1
+echo -e "${YELLOW}[*]${NC} Creating temp directory..."
+TMP_OUTPUT=$(exec_in_vm "mkdir -p $TMP_DIR && echo 'OK'")
+if [ $? -ne 0 ] || [ -z "$TMP_OUTPUT" ]; then
+    echo -e "${RED}Error: Failed to create temp directory${NC}"
+    exit 1
+fi
 
 # Copiar scripts usando base64 (método más confiable)
 echo -e "${YELLOW}[*]${NC} Uploading vram_killer.sh..."
-cat "$VRAM_KILLER_SCRIPT" | base64 | exec_in_vm "cat > $TMP_DIR/vram_killer.sh.b64 && base64 -d $TMP_DIR/vram_killer.sh.b64 > $TMP_DIR/vram_killer.sh && chmod +x $TMP_DIR/vram_killer.sh && rm $TMP_DIR/vram_killer.sh.b64" >/dev/null 2>&1
+VRAM_B64=$(cat "$VRAM_KILLER_SCRIPT" | base64)
+VRAM_OUTPUT=$(exec_in_vm "echo '$VRAM_B64' | base64 -d > $TMP_DIR/vram_killer.sh && chmod +x $TMP_DIR/vram_killer.sh && echo 'OK'")
+if [ $? -ne 0 ] || [ -z "$VRAM_OUTPUT" ]; then
+    echo -e "${RED}Error: Failed to upload vram_killer.sh${NC}"
+    exit 1
+fi
 
 echo -e "${YELLOW}[*]${NC} Uploading install_vram_killer.sh..."
-cat "$INSTALL_SCRIPT" | base64 | exec_in_vm "cat > $TMP_DIR/install_vram_killer.sh.b64 && base64 -d $TMP_DIR/install_vram_killer.sh.b64 > $TMP_DIR/install_vram_killer.sh && chmod +x $TMP_DIR/install_vram_killer.sh && rm $TMP_DIR/install_vram_killer.sh.b64" >/dev/null 2>&1
+INSTALL_B64=$(cat "$INSTALL_SCRIPT" | base64)
+INSTALL_OUTPUT=$(exec_in_vm "echo '$INSTALL_B64' | base64 -d > $TMP_DIR/install_vram_killer.sh && chmod +x $TMP_DIR/install_vram_killer.sh && echo 'OK'")
+if [ $? -ne 0 ] || [ -z "$INSTALL_OUTPUT" ]; then
+    echo -e "${RED}Error: Failed to upload install_vram_killer.sh${NC}"
+    exit 1
+fi
 
 echo -e "${GREEN}✓${NC} Scripts copied"
 
 # Instalar servicio
 echo -e "${YELLOW}[*]${NC} Installing service in VM..."
-INSTALL_OUTPUT=$(exec_in_vm "cd $TMP_DIR && ./install_vram_killer.sh $LIMIT_MIB $CHECK_INTERVAL_MS" 2>&1)
+INSTALL_RESULT=$(exec_in_vm "cd $TMP_DIR && ./install_vram_killer.sh $LIMIT_MIB $CHECK_INTERVAL_MS" 2>&1)
+INSTALL_EXIT=$?
 
-if [ $? -eq 0 ]; then
+if [ $INSTALL_EXIT -eq 0 ]; then
     echo -e "${GREEN}✓${NC} Service installed successfully"
     echo ""
-    echo "$INSTALL_OUTPUT"
+    echo "$INSTALL_RESULT"
 else
-    echo -e "${RED}Error: Installation failed${NC}"
-    echo "$INSTALL_OUTPUT"
+    echo -e "${RED}Error: Installation failed (exit code: $INSTALL_EXIT)${NC}"
+    echo "$INSTALL_RESULT"
+    exit 1
+fi
+
+# Verificar que el servicio se creó
+echo -e "${YELLOW}[*]${NC} Verifying service installation..."
+SERVICE_CHECK=$(exec_in_vm "test -f /etc/systemd/system/vram-killer.service && systemctl is-enabled vram-killer.service 2>&1 && echo 'ENABLED' || echo 'NOT_FOUND'")
+if echo "$SERVICE_CHECK" | grep -q "ENABLED"; then
+    echo -e "${GREEN}✓${NC} Service verified and enabled"
+else
+    echo -e "${RED}Error: Service was not created properly${NC}"
+    echo "Check output: $SERVICE_CHECK"
     exit 1
 fi
 
@@ -141,8 +173,6 @@ echo "=========================================="
 echo -e "${GREEN}Installation completed${NC}"
 echo "=========================================="
 echo ""
-echo "To check status from host:"
-echo "  pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command 'systemctl' --command 'status' --command 'vram-killer'"
-echo ""
-echo "To view logs:"
-echo "  pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command 'tail' --command '-f' --command '/var/log/vram_killer.log'"
+echo "Service is installed and enabled."
+echo "It should start automatically on next boot or you can start it now:"
+echo "  pvesh create /nodes/$NODE/qemu/$VMID/agent/exec --command 'systemctl' --command 'start' --command 'vram-killer'"
