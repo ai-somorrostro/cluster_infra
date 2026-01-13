@@ -15,9 +15,16 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-LIMIT_MIB_RAW=${1:-8192}
-CHECK_INTERVAL_MS_RAW=${2:-5000}
 LOG_FILE="/var/log/vram_killer.log"
+
+# Si el primer argumento es "daemon", saltarlo (viene de systemd)
+if [ "$1" == "daemon" ]; then
+    LIMIT_MIB_RAW=${2:-8192}
+    CHECK_INTERVAL_MS_RAW=${3:-5000}
+else
+    LIMIT_MIB_RAW=${1:-8192}
+    CHECK_INTERVAL_MS_RAW=${2:-5000}
+fi
 
 # Convertir a decimal para evitar interpretación octal (ej: 0500 -> 500)
 # Usar sed para quitar ceros iniciales

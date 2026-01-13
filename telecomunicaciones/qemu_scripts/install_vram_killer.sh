@@ -75,6 +75,13 @@ fi
 # Hacer ejecutable
 chmod +x "$VRAM_KILLER_SCRIPT"
 
+# Copiar script a ubicación permanente
+INSTALL_DIR="/usr/local/bin"
+mkdir -p "$INSTALL_DIR"
+cp "$VRAM_KILLER_SCRIPT" "$INSTALL_DIR/vram_killer.sh"
+chmod +x "$INSTALL_DIR/vram_killer.sh"
+VRAM_KILLER_SCRIPT="$INSTALL_DIR/vram_killer.sh"
+
 # Verificar si ya está instalado
 if [ -f /etc/systemd/system/vram-killer.service ]; then
     echo "Service already installed. Updating configuration..."
