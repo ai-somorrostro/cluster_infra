@@ -86,7 +86,7 @@ exec_in_vm() {
     fi
     
     local count=0
-    while [ $count -lt 30 ]; do
+    while [ $count -lt 120 ]; do
         sleep 1
         local status=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $pid --output-format json 2>/dev/null)
         if echo "$status" | python3 -c "import sys, json; data=json.load(sys.stdin); exit(0 if data.get('exited') else 1)" 2>/dev/null; then
@@ -94,7 +94,12 @@ exec_in_vm() {
             return $?
         fi
         count=$((count+1))
+        # Mostrar progreso cada 10 segundos
+        if [ $((count % 10)) -eq 0 ]; then
+            echo -n "." >&2
+        fi
     done
+    echo "Timeout waiting for command to complete" >&2
     return 1
 }
 

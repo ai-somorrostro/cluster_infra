@@ -146,8 +146,16 @@ echo "Service will execute: $VRAM_KILLER_SCRIPT $SERVICE_ARGS"
 systemctl enable vram-killer.service
 
 # Iniciar servicio
+echo "Starting service..."
 systemctl start vram-killer.service
-sleep 2
+sleep 3
+
+# Verificar que está corriendo
+if systemctl is-active --quiet vram-killer.service; then
+    echo "Service is running"
+else
+    echo "Warning: Service may not be running. Check with: systemctl status vram-killer"
+fi
 
 echo ""
 echo "=========================================="
