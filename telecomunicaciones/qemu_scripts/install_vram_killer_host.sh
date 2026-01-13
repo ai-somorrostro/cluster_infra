@@ -13,7 +13,7 @@ NC='\033[0m'
 
 VMID=$1
 LIMIT_MIB=$2
-CHECK_INTERVAL=${3:-5}
+CHECK_INTERVAL_MS=${3:-5000}
 
 # Verificar root
 if [ "$EUID" -ne 0 ]; then 
@@ -23,14 +23,16 @@ fi
 
 # Verificar argumentos
 if [ -z "$VMID" ] || [ -z "$LIMIT_MB" ] || [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
-    echo "Usage: $0 <vmid> <limit_mib> [check_interval]"
+    echo "Usage: $0 <vmid> <limit_mib> [check_interval_ms]"
     echo ""
     echo "Arguments:"
-    echo "  limit_mib      - Total VRAM limit in MiB (mebibytes)"
-    echo "                   Examples: 8192 MiB = 8 GiB, 4096 MiB = 4 GiB"
+    echo "  limit_mib         - Total VRAM limit in MiB (mebibytes)"
+    echo "                      Examples: 8192 MiB = 8 GiB, 4096 MiB = 4 GiB"
+    echo "  check_interval_ms - Check interval in milliseconds (default: 5000 = 5 seconds)"
     echo ""
     echo "Example:"
-    echo "  $0 121 8192 5    # Install in VM 121 with 8192 MiB (8 GiB) limit, check every 5s"
+    echo "  $0 121 8192 5000    # Install in VM 121 with 8192 MiB (8 GiB) limit, check every 5000ms (5s)"
+    echo "  $0 121 8192 2000    # Install in VM 121 with 8192 MiB (8 GiB) limit, check every 2000ms (2s)"
     exit 0
 fi
 
@@ -115,7 +117,7 @@ echo -e "${GREEN}✓${NC} Scripts copied"
 
 # Instalar servicio
 echo -e "${YELLOW}[*]${NC} Installing service in VM..."
-INSTALL_OUTPUT=$(exec_in_vm "cd $TMP_DIR && ./install_vram_killer.sh $LIMIT_MIB $CHECK_INTERVAL" 2>&1)
+INSTALL_OUTPUT=$(exec_in_vm "cd $TMP_DIR && ./install_vram_killer.sh $LIMIT_MIB $CHECK_INTERVAL_MS" 2>&1)
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✓${NC} Service installed successfully"

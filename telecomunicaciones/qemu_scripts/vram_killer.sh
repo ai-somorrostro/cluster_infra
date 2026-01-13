@@ -4,9 +4,9 @@
 # Kills the most recent process that caused the excess
 # VRAM values are in MiB (mebibytes) as reported by nvidia-smi
 # 
-# Usage: ./vram_killer.sh <limit_mib> [check_interval]
-# Example: ./vram_killer.sh 8192 5
-#          (if sum of VRAM of all processes > 8192 MiB, kills latest process, checks every 5s)
+# Usage: ./vram_killer.sh <limit_mib> [check_interval_ms]
+# Example: ./vram_killer.sh 8192 5000
+#          (if sum of VRAM of all processes > 8192 MiB, kills latest process, checks every 5000ms)
 
 set -e
 
@@ -16,8 +16,11 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 LIMIT_MIB=${1:-8192}
-CHECK_INTERVAL=${2:-5}
+CHECK_INTERVAL_MS=${2:-5000}
 LOG_FILE="/var/log/vram_killer.log"
+
+# Convertir milisegundos a segundos para sleep (bash sleep acepta decimales)
+CHECK_INTERVAL=$(awk "BEGIN {printf \"%.3f\", $CHECK_INTERVAL_MS / 1000}")
 
 # Verificar que nvidia-smi está disponible
 if ! command -v nvidia-smi &> /dev/null; then
@@ -58,7 +61,7 @@ kill_process() {
 
 # Función principal de monitoreo
 monitor_vram() {
-    log "Starting VRAM monitoring - Total limit: ${LIMIT_MIB} MiB - Check interval: ${CHECK_INTERVAL}s"
+    log "Starting VRAM monitoring - Total limit: ${LIMIT_MIB} MiB - Check interval: ${CHECK_INTERVAL_MS}ms"
     log "Strategy: Sum VRAM of all processes, kill the latest one if limit exceeded"
     
     while true; do
@@ -156,17 +159,18 @@ if [ -z "$1" ] || [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
     echo "Usage: $0 <limite_mb> [check_interval]"
     echo ""
     echo "Arguments:"
-    echo "  limit_mib      - Total VRAM limit in MiB (mebibytes) for all processes"
-    echo "                   Examples: 8192 MiB = 8 GiB, 4096 MiB = 4 GiB"
-    echo "  check_interval - Check interval in seconds (default: 5)"
+    echo "  limit_mib         - Total VRAM limit in MiB (mebibytes) for all processes"
+    echo "                      Examples: 8192 MiB = 8 GiB, 4096 MiB = 4 GiB"
+    echo "  check_interval_ms - Check interval in milliseconds (default: 5000 = 5 seconds)"
     echo ""
     echo "How it works:"
     echo "  - Sums VRAM of ALL processes using GPU (values in MiB from nvidia-smi)"
     echo "  - If sum exceeds limit, kills the LATEST process"
     echo ""
     echo "Examples:"
-    echo "  $0 8192        # If total VRAM > 8192 MiB (8 GiB), kills latest process, checks every 5s"
-    echo "  $0 4096 10    # If total VRAM > 4096 MiB (4 GiB), kills latest process, checks every 10s"
+    echo "  $0 8192        # If total VRAM > 8192 MiB (8 GiB), checks every 5000ms (5s)"
+    echo "  $0 4096 2000   # If total VRAM > 4096 MiB (4 GiB), checks every 2000ms (2s)"
+    echo "  $0 8192 1000   # If total VRAM > 8192 MiB (8 GiB), checks every 1000ms (1s)"
     echo ""
     echo "To run as service:"
     echo "  sudo systemctl start vram-killer"
@@ -177,7 +181,7 @@ fi
 # Verificar que se ejecuta como root para poder matar procesos
 if [ "$EUID" -ne 0 ]; then 
     echo -e "${RED}Error: This script must be run as root to kill processes${NC}"
-    echo "Use: sudo $0 $LIMIT_MIB $CHECK_INTERVAL"
+    echo "Use: sudo $0 $LIMIT_MIB $CHECK_INTERVAL_MS"
     exit 1
 fi
 
