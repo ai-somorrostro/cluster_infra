@@ -77,6 +77,12 @@ kill_process() {
 
 # Función principal de monitoreo
 monitor_vram() {
+    # Validar que los valores son numéricos
+    if ! [[ "$LIMIT_MIB" =~ ^[0-9]+$ ]] || ! [[ "$CHECK_INTERVAL_MS" =~ ^[0-9]+$ ]]; then
+        log "ERROR: Invalid arguments - LIMIT_MIB=$LIMIT_MIB CHECK_INTERVAL_MS=$CHECK_INTERVAL_MS"
+        log "Received args: $@"
+        exit 1
+    fi
     log "Starting VRAM monitoring - Total limit: ${LIMIT_MIB} MiB - Check interval: ${CHECK_INTERVAL_MS}ms"
     log "Strategy: Sum VRAM of all processes, kill the latest one if limit exceeded"
     

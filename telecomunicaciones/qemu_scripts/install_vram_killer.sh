@@ -84,8 +84,11 @@ VRAM_KILLER_SCRIPT="$INSTALL_DIR/vram_killer.sh"
 
 # Verificar si ya está instalado
 if [ -f /etc/systemd/system/vram-killer.service ]; then
-    echo "Service already installed. Updating configuration..."
+    echo "Service already installed. Stopping and updating..."
     systemctl stop vram-killer.service 2>/dev/null || true
+    systemctl disable vram-killer.service 2>/dev/null || true
+    rm -f /etc/systemd/system/vram-killer.service
+    systemctl daemon-reload
     echo "=========================================="
     echo "Updating VRAM Killer Service"
     echo "=========================================="
@@ -96,6 +99,7 @@ else
 fi
 echo "VRAM limit: ${LIMIT_MIB} MiB"
 echo "Check interval: ${CHECK_INTERVAL_MS}ms"
+echo "Script location: $VRAM_KILLER_SCRIPT"
 echo ""
 
 # Crear servicio systemd
@@ -116,8 +120,21 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
-# Recargar systemd
+# Recargar systemd (importante después de modificar el servicio)
 systemctl daemon-reload
+
+# Verificar que el servicio tiene la ruta correcta
+SERVICE_EXEC=$(systemctl show vram-killer.service -p ExecStart --value | awk '{print $1}')
+if [ "$SERVICE_EXEC" != "$VRAM_KILLER_SCRIPT" ]; then
+    echo -e "${RED}Error: Service ExecStart path mismatch!${NC}"
+    echo "Expected: $VRAM_KILLER_SCRIPT"
+    echo "Got: $SERVICE_EXEC"
+    exit 1
+fi
+
+# Verificar que los argumentos son correctos
+SERVICE_ARGS=$(systemctl show vram-killer.service -p ExecStart --value | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}')
+echo "Service will execute: $VRAM_KILLER_SCRIPT $SERVICE_ARGS"
 
 # Habilitar servicio
 systemctl enable vram-killer.service
