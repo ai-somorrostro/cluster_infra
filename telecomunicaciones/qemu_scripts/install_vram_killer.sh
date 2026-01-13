@@ -13,7 +13,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 LIMIT_MIB=${1:-8192}
-CHECK_INTERVAL=${2:-5}
+CHECK_INTERVAL_MS=${2:-5000}
 
 # Verificar root
 if [ "$EUID" -ne 0 ]; then 
@@ -39,17 +39,18 @@ fi
 # Verificar argumentos
 if [ -z "$1" ] || [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
     echo "Usage:"
-    echo "  Install/Update: $0 <limit_mib> [check_interval]"
+    echo "  Install/Update: $0 <limit_mib> [check_interval_ms]"
     echo "  Uninstall:      $0 uninstall"
     echo ""
     echo "Arguments:"
-    echo "  limit_mib      - Total VRAM limit in MiB (mebibytes)"
-    echo "                   Examples: 8192 MiB = 8 GiB, 4096 MiB = 4 GiB"
-    echo "  check_interval - Check interval in seconds (default: 5)"
+    echo "  limit_mib         - Total VRAM limit in MiB (mebibytes)"
+    echo "                      Examples: 8192 MiB = 8 GiB, 4096 MiB = 4 GiB"
+    echo "  check_interval_ms - Check interval in milliseconds (default: 5000 = 5 seconds)"
     echo ""
     echo "Examples:"
-    echo "  $0 8192 5     # Install/update with 8192 MiB (8 GiB) limit, check every 5s"
-    echo "  $0 uninstall  # Uninstall service"
+    echo "  $0 8192 5000   # Install/update with 8192 MiB (8 GiB) limit, check every 5000ms (5s)"
+    echo "  $0 8192 2000   # Install/update with 8192 MiB (8 GiB) limit, check every 2000ms (2s)"
+    echo "  $0 uninstall   # Uninstall service"
     exit 0
 fi
 
@@ -78,7 +79,7 @@ else
     echo "=========================================="
 fi
 echo "VRAM limit: ${LIMIT_MIB} MiB"
-echo "Check interval: ${CHECK_INTERVAL}s"
+echo "Check interval: ${CHECK_INTERVAL_MS}ms"
 echo ""
 
 # Crear servicio systemd
@@ -89,7 +90,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=$VRAM_KILLER_SCRIPT daemon $LIMIT_MIB $CHECK_INTERVAL
+ExecStart=$VRAM_KILLER_SCRIPT daemon $LIMIT_MIB $CHECK_INTERVAL_MS
 Restart=always
 RestartSec=10
 StandardOutput=journal
