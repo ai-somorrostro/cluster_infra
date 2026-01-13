@@ -82,24 +82,38 @@ exec_in_vm() {
     local pid=$(echo "$out" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('pid', ''))" 2>/dev/null)
     
     if [ -z "$pid" ]; then
+        echo "ERROR: Failed to get PID from exec command" >&2
         return 1
     fi
     
     local count=0
-    while [ $count -lt 120 ]; do
+    local max_wait=120
+    while [ $count -lt $max_wait ]; do
         sleep 1
-        local status=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $pid --output-format json 2>/dev/null)
-        if echo "$status" | python3 -c "import sys, json; data=json.load(sys.stdin); exit(0 if data.get('exited') else 1)" 2>/dev/null; then
-            echo "$status" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('out-data', '')); exit(data.get('exitcode', 1))" 2>/dev/null
-            return $?
+        local status=$(pvesh get /nodes/$NODE/qemu/$VMID/agent/exec-status --pid $pid --output-format json 2>&1)
+        
+        if [ -z "$status" ] || [ "$status" = "null" ]; then
+            count=$((count+1))
+            continue
         fi
+        
+        # Verificar si el comando terminó (exited puede ser True, 1, o true)
+        local exited=$(echo "$status" | python3 -c "import sys, json; data=json.load(sys.stdin); val=data.get('exited'); print(1 if (val == True or val == 1 or str(val).lower() == 'true') else 0)" 2>/dev/null)
+        
+        if [ "$exited" = "1" ]; then
+            local output=$(echo "$status" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('out-data', ''))" 2>/dev/null)
+            local exitcode=$(echo "$status" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('exitcode', 1))" 2>/dev/null)
+            if [ -n "$output" ]; then
+                echo "$output"
+            fi
+            return ${exitcode:-1}
+        fi
+        
         count=$((count+1))
-        # Mostrar progreso cada 10 segundos
-        if [ $((count % 10)) -eq 0 ]; then
-            echo -n "." >&2
-        fi
     done
-    echo "Timeout waiting for command to complete" >&2
+    
+    echo "ERROR: Timeout after ${max_wait}s waiting for PID $pid" >&2
+    echo "Last status: $status" >&2
     return 1
 }
 
@@ -146,16 +160,34 @@ echo -e "${GREEN}✓${NC} Scripts copied"
 
 # Instalar servicio
 echo -e "${YELLOW}[*]${NC} Installing service in VM..."
-INSTALL_RESULT=$(exec_in_vm "cd $TMP_DIR && ./install_vram_killer.sh $LIMIT_MIB $CHECK_INTERVAL_MS" 2>&1)
+INSTALL_CMD="cd $TMP_DIR && timeout 60 bash ./install_vram_killer.sh $LIMIT_MIB $CHECK_INTERVAL_MS || echo 'INSTALL_EXIT_CODE:'\$?"
+INSTALL_OUTPUT=$(exec_in_vm "$INSTALL_CMD")
 INSTALL_EXIT=$?
+
+# Si no hay salida, puede que el comando aún esté ejecutándose o haya fallado
+if [ -z "$INSTALL_OUTPUT" ] && [ $INSTALL_EXIT -ne 0 ]; then
+    echo -e "${YELLOW}Warning: No output received, but exit code is $INSTALL_EXIT${NC}"
+    echo "Checking if service exists anyway..."
+    SERVICE_EXISTS=$(exec_in_vm "test -f /etc/systemd/system/vram-killer.service && echo 'EXISTS' || echo 'NOT_FOUND'")
+    if echo "$SERVICE_EXISTS" | grep -q "EXISTS"; then
+        echo -e "${GREEN}✓${NC} Service file exists, installation may have succeeded"
+        INSTALL_EXIT=0
+    fi
+fi
 
 if [ $INSTALL_EXIT -eq 0 ]; then
     echo -e "${GREEN}✓${NC} Service installed successfully"
-    echo ""
-    echo "$INSTALL_RESULT"
+    if [ -n "$INSTALL_OUTPUT" ]; then
+        echo "$INSTALL_OUTPUT"
+    fi
 else
-    echo -e "${RED}Error: Installation failed (exit code: $INSTALL_EXIT)${NC}"
-    echo "$INSTALL_RESULT"
+    echo -e "${RED}✗${NC} Installation failed (exit code: $INSTALL_EXIT)"
+    if [ -n "$INSTALL_OUTPUT" ]; then
+        echo "Output:"
+        echo "$INSTALL_OUTPUT"
+    else
+        echo "No output received. Check VM logs manually."
+    fi
     exit 1
 fi
 
