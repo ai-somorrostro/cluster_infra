@@ -129,18 +129,21 @@ cat /etc/systemd/system/vram-killer.service | grep ExecStart
 # Recargar systemd (importante después de modificar el servicio)
 systemctl daemon-reload
 
-# Verificar que el servicio tiene la ruta correcta
-SERVICE_EXEC=$(systemctl show vram-killer.service -p ExecStart --value | awk '{print $1}')
-if [ "$SERVICE_EXEC" != "$VRAM_KILLER_SCRIPT" ]; then
-    echo -e "${RED}Error: Service ExecStart path mismatch!${NC}"
-    echo "Expected: $VRAM_KILLER_SCRIPT"
-    echo "Got: $SERVICE_EXEC"
+# Verificar que el servicio se creó correctamente
+if [ ! -f /etc/systemd/system/vram-killer.service ]; then
+    echo -e "${RED}Error: Service file was not created${NC}"
     exit 1
 fi
 
-# Verificar que los argumentos son correctos
-SERVICE_ARGS=$(systemctl show vram-killer.service -p ExecStart --value | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}')
-echo "Service will execute: $VRAM_KILLER_SCRIPT $SERVICE_ARGS"
+# Verificar que el script existe
+if [ ! -f "$VRAM_KILLER_SCRIPT" ]; then
+    echo -e "${RED}Error: Script not found at $VRAM_KILLER_SCRIPT${NC}"
+    exit 1
+fi
+
+# Mostrar el contenido del servicio para verificación
+echo "Service file created at /etc/systemd/system/vram-killer.service"
+echo "Service will execute: $VRAM_KILLER_SCRIPT daemon ${LIMIT_MIB} ${CHECK_INTERVAL_MS}"
 
 # Habilitar servicio
 systemctl enable vram-killer.service

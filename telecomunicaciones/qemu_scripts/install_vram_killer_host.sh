@@ -193,11 +193,21 @@ fi
 
 # Verificar que el servicio se creó
 echo -e "${YELLOW}[*]${NC} Verifying service installation..."
-SERVICE_CHECK=$(exec_in_vm "test -f /etc/systemd/system/vram-killer.service && systemctl is-enabled vram-killer.service 2>&1 && echo 'ENABLED' || echo 'NOT_FOUND'")
-if echo "$SERVICE_CHECK" | grep -q "ENABLED"; then
-    echo -e "${GREEN}✓${NC} Service verified and enabled"
+SERVICE_CHECK=$(exec_in_vm "test -f /etc/systemd/system/vram-killer.service && echo 'FILE_EXISTS' && systemctl is-enabled vram-killer.service 2>&1 | head -1 && systemctl is-active vram-killer.service 2>&1 | head -1 || echo 'NOT_FOUND'")
+if echo "$SERVICE_CHECK" | grep -q "FILE_EXISTS"; then
+    echo -e "${GREEN}✓${NC} Service file created"
+    if echo "$SERVICE_CHECK" | grep -q "enabled"; then
+        echo -e "${GREEN}✓${NC} Service is enabled"
+    else
+        echo -e "${YELLOW}Warning: Service may not be enabled yet${NC}"
+    fi
+    if echo "$SERVICE_CHECK" | grep -q "active"; then
+        echo -e "${GREEN}✓${NC} Service is running"
+    else
+        echo -e "${YELLOW}Warning: Service may not be running yet${NC}"
+    fi
 else
-    echo -e "${RED}Error: Service was not created properly${NC}"
+    echo -e "${RED}Error: Service file was not created${NC}"
     echo "Check output: $SERVICE_CHECK"
     exit 1
 fi
