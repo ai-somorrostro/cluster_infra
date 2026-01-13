@@ -17,23 +17,26 @@ NC='\033[0m'
 
 LOG_FILE="/var/log/vram_killer.log"
 
-# Si el primer argumento es "daemon", saltarlo (viene de systemd)
-if [ "$1" == "daemon" ]; then
-    shift  # Eliminar "daemon" de los argumentos
-    LIMIT_MIB_RAW=${1:-8192}
-    CHECK_INTERVAL_MS_RAW=${2:-5000}
+# Procesar argumentos: si el primero es "daemon", usar $2 y $3, sino usar $1 y $2
+if [ "$1" = "daemon" ]; then
+    LIMIT_MIB_RAW="$2"
+    CHECK_INTERVAL_MS_RAW="$3"
 else
-    LIMIT_MIB_RAW=${1:-8192}
-    CHECK_INTERVAL_MS_RAW=${2:-5000}
+    LIMIT_MIB_RAW="$1"
+    CHECK_INTERVAL_MS_RAW="$2"
 fi
 
+# Valores por defecto si están vacíos
+[ -z "$LIMIT_MIB_RAW" ] && LIMIT_MIB_RAW=8192
+[ -z "$CHECK_INTERVAL_MS_RAW" ] && CHECK_INTERVAL_MS_RAW=5000
+
 # Validar que tenemos argumentos válidos (no pueden ser "daemon" o vacíos)
-if [ -z "$LIMIT_MIB_RAW" ] || [ "$LIMIT_MIB_RAW" == "daemon" ]; then
-    echo "ERROR: Invalid LIMIT_MIB_RAW='$LIMIT_MIB_RAW'. All args: $@" >&2
+if [ "$LIMIT_MIB_RAW" = "daemon" ] || [ -z "$LIMIT_MIB_RAW" ]; then
+    echo "ERROR: Invalid LIMIT_MIB_RAW='$LIMIT_MIB_RAW'. Received args: $@" >&2
     exit 1
 fi
-if [ -z "$CHECK_INTERVAL_MS_RAW" ] || [ "$CHECK_INTERVAL_MS_RAW" == "daemon" ]; then
-    echo "ERROR: Invalid CHECK_INTERVAL_MS_RAW='$CHECK_INTERVAL_MS_RAW'. All args: $@" >&2
+if [ "$CHECK_INTERVAL_MS_RAW" = "daemon" ] || [ -z "$CHECK_INTERVAL_MS_RAW" ]; then
+    echo "ERROR: Invalid CHECK_INTERVAL_MS_RAW='$CHECK_INTERVAL_MS_RAW'. Received args: $@" >&2
     exit 1
 fi
 

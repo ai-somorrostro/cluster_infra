@@ -103,6 +103,7 @@ echo "Script location: $VRAM_KILLER_SCRIPT"
 echo ""
 
 # Crear servicio systemd
+# IMPORTANTE: Usar comillas para asegurar que los argumentos se pasen correctamente
 cat > /etc/systemd/system/vram-killer.service <<EOF
 [Unit]
 Description=VRAM Killer - Kills processes when total VRAM exceeds limit (kills latest)
@@ -110,7 +111,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=$VRAM_KILLER_SCRIPT daemon $LIMIT_MIB $CHECK_INTERVAL_MS
+ExecStart=$VRAM_KILLER_SCRIPT daemon ${LIMIT_MIB} ${CHECK_INTERVAL_MS}
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -119,6 +120,10 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF
+
+# Verificar que el servicio se creó correctamente
+echo "Verifying service file..."
+cat /etc/systemd/system/vram-killer.service | grep ExecStart
 
 # Recargar systemd (importante después de modificar el servicio)
 systemctl daemon-reload
