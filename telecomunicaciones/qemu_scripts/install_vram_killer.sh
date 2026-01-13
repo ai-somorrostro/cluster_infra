@@ -75,10 +75,10 @@ fi
 # Hacer ejecutable
 chmod +x "$VRAM_KILLER_SCRIPT"
 
-# Copiar script a ubicación permanente
+# SIEMPRE copiar script a ubicación permanente (actualizar si ya existe)
 INSTALL_DIR="/usr/local/bin"
 mkdir -p "$INSTALL_DIR"
-cp "$VRAM_KILLER_SCRIPT" "$INSTALL_DIR/vram_killer.sh"
+cp -f "$VRAM_KILLER_SCRIPT" "$INSTALL_DIR/vram_killer.sh"
 chmod +x "$INSTALL_DIR/vram_killer.sh"
 VRAM_KILLER_SCRIPT="$INSTALL_DIR/vram_killer.sh"
 
@@ -97,6 +97,7 @@ else
     echo "Installing VRAM Killer Service"
     echo "=========================================="
 fi
+
 echo "VRAM limit: ${LIMIT_MIB} MiB"
 echo "Check interval: ${CHECK_INTERVAL_MS}ms"
 echo "Script location: $VRAM_KILLER_SCRIPT"
