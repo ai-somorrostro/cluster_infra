@@ -12,8 +12,12 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 VMID=$1
-LIMIT_MIB=$2
-CHECK_INTERVAL_MS=${3:-5000}
+LIMIT_MIB_RAW=$2
+CHECK_INTERVAL_MS_RAW=${3:-5000}
+
+# Convertir a decimal para evitar interpretación octal (ej: 0500 -> 500)
+LIMIT_MIB=$((10#$LIMIT_MIB_RAW))
+CHECK_INTERVAL_MS=$((10#$CHECK_INTERVAL_MS_RAW))
 
 # Verificar root
 if [ "$EUID" -ne 0 ]; then 
@@ -22,7 +26,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Verificar argumentos
-if [ -z "$VMID" ] || [ -z "$LIMIT_MB" ] || [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
+if [ -z "$VMID" ] || [ -z "$LIMIT_MIB_RAW" ] || [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
     echo "Usage: $0 <vmid> <limit_mib> [check_interval_ms]"
     echo ""
     echo "Arguments:"

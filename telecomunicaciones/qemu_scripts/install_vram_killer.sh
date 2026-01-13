@@ -12,8 +12,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-LIMIT_MIB=${1:-8192}
-CHECK_INTERVAL_MS=${2:-5000}
+LIMIT_MIB_RAW=${1:-8192}
+CHECK_INTERVAL_MS_RAW=${2:-5000}
+
+# Convertir a decimal para evitar interpretación octal (ej: 0500 -> 500)
+LIMIT_MIB=$((10#$LIMIT_MIB_RAW))
+CHECK_INTERVAL_MS=$((10#$CHECK_INTERVAL_MS_RAW))
 
 # Verificar root
 if [ "$EUID" -ne 0 ]; then 
