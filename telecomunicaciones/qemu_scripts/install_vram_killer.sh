@@ -12,7 +12,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-LIMIT_MB=${1:-4096}
+LIMIT_MIB=${1:-8192}
 CHECK_INTERVAL=${2:-5}
 
 # Verificar root
@@ -39,15 +39,16 @@ fi
 # Verificar argumentos
 if [ -z "$1" ] || [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
     echo "Usage:"
-    echo "  Install/Update: $0 <limit_mb> [check_interval]"
+    echo "  Install/Update: $0 <limit_mib> [check_interval]"
     echo "  Uninstall:      $0 uninstall"
     echo ""
     echo "Arguments:"
-    echo "  limit_mb       - Total VRAM limit in MB (e.g., 4096 for 4GB)"
+    echo "  limit_mib      - Total VRAM limit in MiB (mebibytes)"
+    echo "                   Examples: 8192 MiB = 8 GiB, 4096 MiB = 4 GiB"
     echo "  check_interval - Check interval in seconds (default: 5)"
     echo ""
     echo "Examples:"
-    echo "  $0 4096 5     # Install/update with 4GB limit, check every 5s"
+    echo "  $0 8192 5     # Install/update with 8192 MiB (8 GiB) limit, check every 5s"
     echo "  $0 uninstall  # Uninstall service"
     exit 0
 fi
@@ -68,9 +69,6 @@ chmod +x "$VRAM_KILLER_SCRIPT"
 if [ -f /etc/systemd/system/vram-killer.service ]; then
     echo "Service already installed. Updating configuration..."
     systemctl stop vram-killer.service 2>/dev/null || true
-fi
-
-if [ -f /etc/systemd/system/vram-killer.service ]; then
     echo "=========================================="
     echo "Updating VRAM Killer Service"
     echo "=========================================="
@@ -79,7 +77,7 @@ else
     echo "Installing VRAM Killer Service"
     echo "=========================================="
 fi
-echo "VRAM limit: ${LIMIT_MB}MB"
+echo "VRAM limit: ${LIMIT_MIB} MiB"
 echo "Check interval: ${CHECK_INTERVAL}s"
 echo ""
 
@@ -91,7 +89,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=$VRAM_KILLER_SCRIPT daemon $LIMIT_MB $CHECK_INTERVAL
+ExecStart=$VRAM_KILLER_SCRIPT daemon $LIMIT_MIB $CHECK_INTERVAL
 Restart=always
 RestartSec=10
 StandardOutput=journal
