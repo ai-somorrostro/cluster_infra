@@ -12,17 +12,25 @@ NC='\033[0m'
 DO_SYSPREP=1
 FORCE_STOP=0
 WAIT_SECONDS=180
+NAME_EXACT=""
+NAME_PREFIX=""
+NAME_SUFFIX=""
 
 usage() {
-  echo "Uso: $0 [--no-sysprep] [--force-stop] [--wait <segundos>] <vmid1> [vmid2] ..."
+  echo "Uso: $0 [--no-sysprep] [--force-stop] [--wait <segundos>] [--name <nuevo>] [--name-prefix <p>] [--name-suffix <s>] <vmid1> [vmid2] ..."
   echo ""
   echo "Opciones:"
   echo "  --no-sysprep     No hace limpieza dentro de la VM"
   echo "  --force-stop     Si no apaga en WAIT, hace stop duro"
   echo "  --wait N         Segundos a esperar a shutdown (default: $WAIT_SECONDS)"
+  echo "  --name NUEVO     Renombra la VM/template a NUEVO (solo si pasas 1 VMID)"
+  echo "  --name-prefix P  Renombra como P+<nombre_actual>"
+  echo "  --name-suffix S  Renombra como <nombre_actual>+S"
   echo ""
   echo "Ejemplo:"
   echo "  $0 --wait 240 120 121"
+  echo "  $0 --name ubuntu-24-template 120"
+  echo "  $0 --name-suffix -tpl 120 121"
 }
 
 while [[ "${1:-}" =~ ^-- ]]; do
@@ -38,6 +46,30 @@ while [[ "${1:-}" =~ ^-- ]]; do
     --force-stop)
       FORCE_STOP=1
       shift 1
+      ;;
+    --name)
+      NAME_EXACT="${2:-}"
+      if [[ -z "$NAME_EXACT" ]]; then
+        echo -e "${RED}Error:${NC} --name requiere un valor"
+        exit 1
+      fi
+      shift 2
+      ;;
+    --name-prefix)
+      NAME_PREFIX="${2:-}"
+      if [[ -z "$NAME_PREFIX" ]]; then
+        echo -e "${RED}Error:${NC} --name-prefix requiere un valor"
+        exit 1
+      fi
+      shift 2
+      ;;
+    --name-suffix)
+      NAME_SUFFIX="${2:-}"
+      if [[ -z "$NAME_SUFFIX" ]]; then
+        echo -e "${RED}Error:${NC} --name-suffix requiere un valor"
+        exit 1
+      fi
+      shift 2
       ;;
     --wait)
       WAIT_SECONDS="${2:-}"
@@ -65,6 +97,11 @@ if [ $# -lt 1 ]; then
 fi
 
 VMIDS=("$@")
+
+if [[ -n "$NAME_EXACT" && ${#VMIDS[@]} -ne 1 ]]; then
+  echo -e "${RED}Error:${NC} --name solo se permite con 1 VMID (para varios usa --name-prefix/--name-suffix)"
+  exit 1
+fi
 
 wait_for_pid() {
   local pid=$1
@@ -188,6 +225,36 @@ convert_to_template() {
   return 1
 }
 
+maybe_rename_vm() {
+  local target_name=""
+
+  if [[ -n "$NAME_EXACT" ]]; then
+    target_name="$NAME_EXACT"
+  elif [[ -n "$NAME_PREFIX" || -n "$NAME_SUFFIX" ]]; then
+    target_name="${NAME_PREFIX}${VM_NAME}${NAME_SUFFIX}"
+  else
+    return 0
+  fi
+
+  if [[ -z "$target_name" ]]; then
+    return 0
+  fi
+
+  if [[ "$target_name" = "$VM_NAME" ]]; then
+    return 0
+  fi
+
+  echo -e "${YELLOW}[*]${NC} Renombrando: ${VM_NAME} -> ${target_name}"
+  if pvesh set /nodes/"$NODE"/qemu/"$VMID"/config --name "$target_name" >/dev/null 2>&1; then
+    VM_NAME="$target_name"
+    echo -e "${GREEN}[✓]${NC} Renombrado"
+    return 0
+  fi
+
+  echo -e "${RED}[✗]${NC} No se pudo renombrar (¿nombre duplicado? ¿permisos?)"
+  return 1
+}
+
 for VMID in "${VMIDS[@]}"; do
   if [[ ! "$VMID" =~ ^[0-9]+$ ]]; then
     echo -e "${RED}[✗]${NC} VMID inválido: $VMID"
@@ -209,6 +276,11 @@ for VMID in "${VMIDS[@]}"; do
 
   echo "Nodo: $NODE | Nombre: $VM_NAME | VMID: $VMID"
   echo -e "${YELLOW}==========================================${NC}"
+
+  if ! maybe_rename_vm; then
+    echo -e "${RED}[✗]${NC} Renombrado falló; no convierto esta VM"
+    continue
+  fi
 
   VM_STATUS=$(get_vm_status_json)
   if [ -z "$VM_STATUS" ]; then
