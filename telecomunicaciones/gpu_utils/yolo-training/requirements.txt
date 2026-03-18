@@ -1,0 +1,24 @@
+# PyTorch con CUDA 11.8
+--index-url https://download.pytorch.org/whl/cu118
+torch==2.1.0
+torchvision==0.16.0
+torchaudio==2.1.0
+
+# YOLO y Computer Vision
+ultralytics
+opencv-python-headless
+
+# Transformers y DINO
+transformers
+supervision
+groundingdino-py
+
+# Visualización y utilidades
+tensorboard
+matplotlib
+pillow
+pyyaml
+tqdm
+
+# NumPy 1.26.4 (última 1.x estable compatible con PyTorch 2.1)
+numpy==1.26.4

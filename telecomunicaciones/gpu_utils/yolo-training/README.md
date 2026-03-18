@@ -1,17 +1,6 @@
 # YOLO Training Docker Environment
 
-Entorno Docker para entrenamiento de modelos YOLO y DINO con limitación de VRAM.
 
-## Estructura de Directorios
-
-```
-gpu_utils/
-├── Dockerfile              # Imagen base con CUDA 11.8 + PyTorch
-├── scripts/               
-│   └── train_yolo.py      # Script de entrenamiento básico
-├── datasets/              # Coloca aquí tus datasets personalizados
-└── runs/                  # Resultados de entrenamiento (persistente)
-```
 
 ## 1. Construir la Imagen
 
@@ -27,32 +16,42 @@ O usa el script:
 
 ## 2. Entrenar un Modelo
 
-### Opción A: Entrenamiento básico con script de prueba
+### Uso básico
 
 ```bash
-docker run --rm \
-  --gpus all \
-  --network host \
-  --memory=8g \
-  --user $(id -u):$(id -g) \
-  -v $(pwd):/workspace \
-  -v $(pwd)/runs:/workspace/runs \
-  -v ~/.cache/ultralytics:/root/.cache/ultralytics \
-  -e PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512 \
-  yolo-training-image \
-  python3 /workspace/scripts/train_yolo.py
+./train.sh <script_entrenamiento> <carpeta_imagenes>
 ```
 
-O usa el script:
+### Ejemplos
+
+**Entrenamiento básico (script de prueba):**
 ```bash
 ./train.sh
+# Usa: scripts/train_yolo.py y datasets/
 ```
 
-### Opción B: Entrenamiento con tu propio script
-
+**Con tu propio script y dataset:**
 ```bash
-./train.sh scripts/mi_script.py
+./train.sh scripts/mi_train.py datasets/mi_dataset
 ```
+
+**Con path absoluto a imágenes:**
+```bash
+./train.sh scripts/mi_train.py /mnt/data/imagenes
+```
+
+**Ver ayuda:**
+```bash
+./train.sh --help
+```
+
+### Acceso desde el script Python
+
+Dentro de tu script de entrenamiento, las carpetas están montadas en:
+- Script: El que especificaste (path absoluto)
+- Dataset: `/workspace/dataset` (montado desde tu carpeta_imagenes)
+- Output: `/workspace/runs` (persistente en gpu_utils/yolo-training/runs)
+- Cache: `/root/.cache/ultralytics` (modelos YOLO descargados)
 
 ### Opción C: Modo interactivo (para debugging)
 

@@ -15,4 +15,4 @@ docker run --rm \
   --network host \
   -v $(pwd)/runs:/workspace/runs \
   yolo-training-image \
-  tensorboard --logdir=/workspace/runs --port=$PORT --host=0.0.0.0
+  python -m tensorboard.main --logdir=/workspace/runs --port=$PORT --host=0.0.0.0

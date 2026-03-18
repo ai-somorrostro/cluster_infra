@@ -24,7 +24,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Paso 1: Verificar que la GPU está detectada
-echo -e "${YELLOW}[1/8]${NC} Verificando hardware NVIDIA..."
+echo -e "${YELLOW}[1/9]${NC} Verificando hardware NVIDIA..."
 if lspci | grep -i nvidia > /dev/null; then
     echo -e "${GREEN}✓${NC} GPU NVIDIA detectada:"
     lspci | grep -i nvidia
@@ -38,13 +38,13 @@ fi
 echo ""
 
 # Paso 2: Actualizar lista de paquetes
-echo -e "${YELLOW}[2/8]${NC} Actualizando lista de paquetes..."
+echo -e "${YELLOW}[2/9]${NC} Actualizando lista de paquetes..."
 apt update
 echo -e "${GREEN}✓${NC} Lista de paquetes actualizada"
 echo ""
 
 # Paso 3: Instalar dependencias
-echo -e "${YELLOW}[3/8]${NC} Instalando dependencias..."
+echo -e "${YELLOW}[3/9]${NC} Instalando dependencias..."
 apt install -y \
     build-essential \
     dkms \
@@ -57,7 +57,7 @@ echo -e "${GREEN}✓${NC} Dependencias instaladas"
 echo ""
 
 # Paso 4: Detectar y recomendar driver
-echo -e "${YELLOW}[4/8]${NC} Detectando driver recomendado..."
+echo -e "${YELLOW}[4/9]${NC} Detectando driver recomendado..."
 RECOMMENDED_DRIVER=$(ubuntu-drivers devices | grep -i recommended | awk '{print $3}' | head -1)
 
 if [ -z "$RECOMMENDED_DRIVER" ]; then
@@ -71,14 +71,14 @@ fi
 echo ""
 
 # Paso 5: Instalar driver
-echo -e "${YELLOW}[5/8]${NC} Instalando driver NVIDIA ($DRIVER_VERSION)..."
+echo -e "${YELLOW}[5/9]${NC} Instalando driver NVIDIA ($DRIVER_VERSION)..."
 echo "Esto puede tardar varios minutos..."
 apt install -y "$DRIVER_VERSION"
 echo -e "${GREEN}✓${NC} Driver instalado"
 echo ""
 
 # Paso 6: Verificar instalación
-echo -e "${YELLOW}[6/8]${NC} Verificando instalación..."
+echo -e "${YELLOW}[6/9]${NC} Verificando instalación..."
 if nvidia-smi > /dev/null 2>&1; then
     echo -e "${GREEN}✓${NC} Driver funcionando correctamente:"
     nvidia-smi
@@ -90,7 +90,7 @@ fi
 echo ""
 
 # Paso 7: Configuración adicional
-echo -e "${YELLOW}[7/8]${NC} Configuración adicional..."
+echo -e "${YELLOW}[7/9]${NC} Configuración adicional..."
 
 # Crear archivo de configuración para evitar modo de persistencia (opcional)
 cat > /etc/modprobe.d/nvidia.conf << EOF
@@ -102,7 +102,7 @@ echo -e "${GREEN}✓${NC} Configuración aplicada"
 echo ""
 
 # Paso 8: Instalar CUDA Toolkit
-echo -e "${YELLOW}[8/8]${NC} Instalando CUDA Toolkit..."
+echo -e "${YELLOW}[8/9]${NC} Instalando CUDA Toolkit..."
 echo "Esto puede tardar varios minutos..."
 apt install -y nvidia-cuda-toolkit
 echo -e "${GREEN}✓${NC} CUDA Toolkit instalado"
@@ -114,6 +114,34 @@ if command -v nvcc > /dev/null 2>&1; then
     nvcc --version
     echo ""
 fi
+
+# Instalar NVIDIA Container Toolkit (para Docker)
+echo -e "${YELLOW}[9/9]${NC} Instalando NVIDIA Container Toolkit..."
+echo "Configurando repositorio de NVIDIA..."
+
+# Configurar repositorio
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+# Actualizar e instalar
+apt update
+apt install -y nvidia-container-toolkit
+
+# Configurar Docker para usar NVIDIA runtime
+if command -v docker > /dev/null 2>&1; then
+    echo "Configurando Docker runtime..."
+    nvidia-ctk runtime configure --runtime=docker
+    systemctl restart docker
+    echo -e "${GREEN}✓${NC} NVIDIA Container Toolkit instalado y Docker configurado"
+else
+    echo -e "${YELLOW}⚠${NC} Docker no instalado. Instala Docker y ejecuta:"
+    echo "  sudo nvidia-ctk runtime configure --runtime=docker"
+    echo "  sudo systemctl restart docker"
+fi
+echo ""
 
 # Instalar nvtop para monitoreo de GPU
 echo -e "${YELLOW}[Extra]${NC} Instalando nvtop para monitoreo de GPU..."
@@ -137,9 +165,11 @@ echo "=========================================="
 echo ""
 echo "Próximos pasos:"
 echo "1. Reinicia el sistema: sudo reboot"
-echo "2. Después del reinicio, verifica con: nvidia-smi"
-echo "3. Verifica CUDA con: nvcc --version"
-echo "4. Monitorea GPU con: nvtop"
+echo "2. Después del reinicio, verifica:"
+echo "   - GPU: nvidia-smi"
+echo "   - CUDA: nvcc --version"
+echo "   - Docker+GPU: docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi"
+echo "3. Monitorea GPU con: nvtop"
 echo ""
 echo "Para verificar sin reiniciar (puede no funcionar):"
 echo "  sudo modprobe nvidia"
