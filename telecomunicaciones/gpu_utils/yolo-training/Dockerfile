@@ -1,55 +1,28 @@
-# Dockerfile para entrenamiento YOLO y DINO
-# Base: CUDA 11.8 con cuDNN 8
-FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
+# Dockerfile para entrenamiento YOLO con TensorBoard garantizado
+FROM ultralytics/ultralytics:latest
 
-# Evitar prompts interactivos
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Instalar dependencias del sistema
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-dev \
-    git \
-    wget \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Actualizar pip
-RUN python3 -m pip install --upgrade pip
-
-# Instalar PyTorch con CUDA 11.8 (versión 2.1.0 es estable con CUDA 11.8)
-RUN pip3 install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu118
-
-# Instalar librerías para YOLO y DINO
-RUN pip3 install \
-    ultralytics \
-    opencv-python-headless \
+# Instalar dependencias adicionales (versiones específicas para compatibilidad)
+RUN pip install --no-cache-dir \
     transformers \
     supervision \
     groundingdino-py \
-    tensorboard \
-    matplotlib \
-    pillow \
-    pyyaml \
-    tqdm
+    tensorboard>=2.14.0 \
+    torch-tb-profiler
 
-# Variables de entorno para limitar VRAM
-ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+# Variables de entorno
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:7168
+ENV HOME=/tmp
 
-# Crear directorio de trabajo
+# Crear directorio de configuración de Ultralytics
+RUN mkdir -p /root/.config/Ultralytics && \
+    echo "settings_version: 0.0.6" > /root/.config/Ultralytics/settings.yaml && \
+    echo "tensorboard: true" >> /root/.config/Ultralytics/settings.yaml && \
+    echo "runs_dir: /workspace/runs" >> /root/.config/Ultralytics/settings.yaml
+
+# Crear directorios de trabajo
+RUN mkdir -p /workspace/runs /workspace/scripts /workspace/datasets
+
 WORKDIR /workspace
-
-# Configurar usuario (se pasará en runtime)
-# El contenedor correrá como el usuario del host para evitar problemas de permisos
-
-# Exponer puerto para tensorboard (configurable)
 EXPOSE 6006
 
-# Por defecto, bash
 CMD ["/bin/bash"]

@@ -1,10 +1,18 @@
 #!/bin/bash
 # Script para construir la imagen Docker
+# Uso: ./build.sh [--no-cache]
 
 set -e
 
+# Opciones de build
+BUILD_OPTS=""
+if [ "$1" == "--no-cache" ]; then
+    echo "Construyendo sin caché..."
+    BUILD_OPTS="--no-cache"
+fi
+
 echo "Construyendo imagen yolo-training-image..."
-docker build -t yolo-training-image .
+docker build $BUILD_OPTS -t yolo-training-image .
 
 echo ""
 echo "✓ Imagen construida exitosamente"
