@@ -16,6 +16,7 @@ DISPLAY_BASE=70
 PASSWORD=""
 EXPIRE_SECONDS=""
 PASSWORD_ON=0
+RESTART_ON_APPLY=1
 
 usage() {
   echo "Uso: $0 [--bind <ip>] [--display <n>] [--display-base <n>] [--password <8chars>] [--expire <segundos>] <vmid1> [vmid2] ..."
@@ -34,6 +35,7 @@ usage() {
   echo "  --display-base N   Para múltiples VMIDs: display = base + (vmid % 100) (default: $DISPLAY_BASE)"
   echo "  --password PASS    Activa password=on y setea password (max 8 chars)"
   echo "  --expire SECS      Opcional: expire_password (requiere --password y VM running)"
+  echo "  --no-restart        No reinicia la VM tras aplicar los args (si estaba running)"
   echo ""
   echo "Ejemplos:"
   echo "  $0 --display 77 --password foobar1 120"
@@ -87,6 +89,10 @@ while [[ "${1:-}" =~ ^-- ]]; do
         exit 1
       fi
       shift 2
+      ;;
+    --no-restart)
+      RESTART_ON_APPLY=0
+      shift 1
       ;;
     --help|-h)
       usage
@@ -311,6 +317,7 @@ for ((i=0; i<${#VMIDS[@]}; i++)); do
   echo -e "${YELLOW}[*]${NC} args: ${VNC_ARGS}"
   echo -e "${YELLOW}[*]${NC} Puerto: ${VNC_PORT} (display ${DISP})"
 
+  STATUS_BEFORE="$(vm_status "$VMID")"
   # Persistente: mergea args existentes + sustituye/añade -vnc
   CURRENT_ARGS="$(get_current_args "$VMID")"
   VNC_DESC="$(describe_current_vnc "$CURRENT_ARGS" || echo "0|")"
@@ -337,9 +344,24 @@ for ((i=0; i<${#VMIDS[@]}; i++)); do
     echo -e "${YELLOW}[!]${NC} No se pudo actualizar Notes (no crítico)"
   fi
 
+  # Aplicar la config VNC requiere reinicio (si está running).
+  if [ $RESTART_ON_APPLY -eq 1 ] && [ "$STATUS_BEFORE" = "running" ]; then
+    echo -e "${YELLOW}[*]${NC} Reiniciando VM para aplicar args VNC..."
+    qm restart "$VMID" >/dev/null 2>&1 || true
+  fi
+
   # No persistente: set_password (solo si la VM está running ahora)
   if [ $PASSWORD_ON -eq 1 ]; then
     STATUS="$(vm_status "$VMID")"
+    if [ $RESTART_ON_APPLY -eq 1 ] && [ "$STATUS_BEFORE" = "running" ]; then
+      # Tras restart puede tardar; damos un poco de margen.
+      local wait_try=0
+      while [ $wait_try -lt 30 ] && [ "$STATUS" != "running" ]; do
+        sleep 2
+        STATUS="$(vm_status "$VMID")"
+        wait_try=$((wait_try+1))
+      done
+    fi
     if [ "$STATUS" = "running" ]; then
       if qm monitor "$VMID" --cmd "set_password vnc $PASSWORD -d vnc2" >/dev/null 2>&1; then
         echo -e "${GREEN}[✓]${NC} Password seteada (no persistente)"
