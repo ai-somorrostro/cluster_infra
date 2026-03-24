@@ -178,10 +178,18 @@ for VMID in "${VMIDS[@]}"; do
   if [ "$VERIFIED" = "$NEW_HOSTNAME" ]; then
     echo -e "${GREEN}[OK] — ${VERIFIED}${NC}"
   else
-    echo -e "${YELLOW}[WARN] — ${VERIFIED}${NC} (puede requerir reinicio)"
+    echo -e "${YELLOW}[WARN] — ${VERIFIED}${NC}"
   fi
 
   echo -e "${GREEN}Hostname: '${CURRENT_HOSTNAME}' → '${NEW_HOSTNAME}'${NC}"
+
+  # Reiniciar
+  echo -n "Reiniciando VM... "
+  if pvesh create /nodes/"$NODE"/qemu/"$VMID"/status/reboot >/dev/null 2>&1; then
+    echo -e "${GREEN}[OK]${NC}"
+  else
+    echo -e "${RED}[ERROR]${NC}"
+  fi
 done
 
 echo -e "\n${GREEN}==========================================${NC}"
