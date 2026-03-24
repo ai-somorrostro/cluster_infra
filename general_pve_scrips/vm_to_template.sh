@@ -15,9 +15,11 @@ WAIT_SECONDS=180
 NAME_EXACT=""
 NAME_PREFIX=""
 NAME_SUFFIX=""
+SOURCE_STORAGE=""
+TARGET_STORAGE=""
 
 usage() {
-  echo "Uso: $0 [--no-sysprep] [--force-stop] [--wait <segundos>] [--name <nuevo>] [--name-prefix <p>] [--name-suffix <s>] <vmid1> [vmid2] ..."
+  echo "Uso: $0 [--no-sysprep] [--force-stop] [--wait <segundos>] [--name <nuevo>] [--name-prefix <p>] [--name-suffix <s>] [--from <storage>] [--to <storage>] <vmid1> [vmid2] ..."
   echo ""
   echo "Opciones:"
   echo "  --no-sysprep     No hace limpieza dentro de la VM"
@@ -26,11 +28,14 @@ usage() {
   echo "  --name NUEVO     Renombra la VM/template a NUEVO (solo si pasas 1 VMID)"
   echo "  --name-prefix P  Renombra como P+<nombre_actual>"
   echo "  --name-suffix S  Renombra como <nombre_actual>+S"
+  echo "  --from S         Mover discos que estén en este storage origen"
+  echo "  --to S           Mover discos al storage destino (requiere --from)"
   echo ""
-  echo "Ejemplo:"
+  echo "Ejemplos:"
   echo "  $0 --wait 240 120 121"
   echo "  $0 --name ubuntu-24-template 120"
   echo "  $0 --name-suffix -tpl 120 121"
+  echo "  $0 --from local-lvm --to ssd-data 120"
 }
 
 while [[ "${1:-}" =~ ^-- ]]; do
@@ -79,6 +84,22 @@ while [[ "${1:-}" =~ ^-- ]]; do
       fi
       shift 2
       ;;
+    --from)
+      SOURCE_STORAGE="${2:-}"
+      if [[ -z "$SOURCE_STORAGE" ]]; then
+        echo -e "${RED}Error:${NC} --from requiere un valor"
+        exit 1
+      fi
+      shift 2
+      ;;
+    --to)
+      TARGET_STORAGE="${2:-}"
+      if [[ -z "$TARGET_STORAGE" ]]; then
+        echo -e "${RED}Error:${NC} --to requiere un valor"
+        exit 1
+      fi
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -90,6 +111,11 @@ while [[ "${1:-}" =~ ^-- ]]; do
       ;;
   esac
 done
+
+if [[ -n "$TARGET_STORAGE" && -z "$SOURCE_STORAGE" ]]; then
+  echo -e "${RED}Error:${NC} --to requiere también --from"
+  exit 1
+fi
 
 if [ $# -lt 1 ]; then
   usage
@@ -215,6 +241,34 @@ sysprep_vm() {
   echo -e "${GREEN}[✓]${NC} Sysprep completado"
 }
 
+move_disks() {
+  echo -e "${YELLOW}[*]${NC} Detectando discos en ${SOURCE_STORAGE}..."
+  mapfile -t DISKS < <(qm config "$VMID" 2>/dev/null | grep -E '^(scsi|virtio|sata|ide)[0-9]+:' | grep -v 'media=cdrom')
+
+  if [ ${#DISKS[@]} -eq 0 ]; then
+    echo -e "${YELLOW}[!]${NC} No se encontraron discos"
+    return 0
+  fi
+
+  for line in "${DISKS[@]}"; do
+    local disk_key storage
+    disk_key=$(echo "$line" | cut -d: -f1)
+    storage=$(echo "$line" | cut -d: -f2 | xargs | cut -d: -f1)
+
+    if [ "$storage" != "$SOURCE_STORAGE" ]; then
+      echo -e "${YELLOW}[~]${NC} ${disk_key}: está en ${storage} (no es ${SOURCE_STORAGE}), saltando"
+      continue
+    fi
+
+    echo -e "${YELLOW}[*]${NC} Moviendo ${disk_key}: ${SOURCE_STORAGE} → ${TARGET_STORAGE}"
+    if qm move-disk "$VMID" "$disk_key" "$TARGET_STORAGE" --delete 1 2>&1 | while IFS= read -r l; do echo "    $l"; done; then
+      echo -e "${GREEN}[✓]${NC} ${disk_key} movido a ${TARGET_STORAGE}"
+    else
+      echo -e "${RED}[✗]${NC} Falló mover ${disk_key}"
+    fi
+  done
+}
+
 convert_to_template() {
   echo -e "${YELLOW}[*]${NC} Convirtiendo a template..."
   if pvesh create /nodes/"$NODE"/qemu/"$VMID"/template >/dev/null 2>&1; then
@@ -312,6 +366,10 @@ for VMID in "${VMIDS[@]}"; do
 
   if ! convert_to_template; then
     continue
+  fi
+
+  if [[ -n "$SOURCE_STORAGE" && -n "$TARGET_STORAGE" ]]; then
+    move_disks
   fi
 done
 
