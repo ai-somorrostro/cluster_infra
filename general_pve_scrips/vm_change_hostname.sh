@@ -12,6 +12,7 @@ NC='\033[0m'
 NAME_EXACT=""
 NAME_PREFIX=""
 NAME_SUFFIX=""
+FILE=""
 
 usage() {
   echo "Uso:"
@@ -19,19 +20,22 @@ usage() {
   echo "  $0 <vmid1> <hostname1> <vmid2> <hostname2>   # varias VMs con nombres explícitos"
   echo "  $0 --name-prefix <p> <vmid1> [vmid2] ...     # prefijo sobre hostname actual"
   echo "  $0 --name-suffix <s> <vmid1> [vmid2] ...     # sufijo sobre hostname actual"
+  echo "  $0 -f <fichero.txt>                           # desde fichero vmid:hostname"
   echo ""
   echo "Opciones:"
   echo "  --name-prefix P  Nuevo hostname = P + hostname_actual"
   echo "  --name-suffix S  Nuevo hostname = hostname_actual + S"
+  echo "  -f FILE          Fichero con líneas 'vmid:hostname' (líneas vacías y # ignorados)"
   echo ""
   echo "Ejemplos:"
   echo "  $0 100 webserver01"
   echo "  $0 100 webserver01 101 webserver02 102 webserver03"
   echo "  $0 --name-prefix prod- 100 101 102"
   echo "  $0 --name-suffix -dev 100 101"
+  echo "  $0 -f hostnames.txt"
 }
 
-while [[ "${1:-}" =~ ^-- ]]; do
+while [[ $# -gt 0 && ( "${1:-}" =~ ^-- || "${1:-}" == "-f" || "${1:-}" == "-h" ) ]]; do
   case "${1:-}" in
     --name-prefix)
       NAME_PREFIX="${2:-}"
@@ -41,23 +45,44 @@ while [[ "${1:-}" =~ ^-- ]]; do
       NAME_SUFFIX="${2:-}"
       if [[ -z "$NAME_SUFFIX" ]]; then echo -e "${RED}Error:${NC} --name-suffix requiere un valor"; exit 1; fi
       shift 2 ;;
+    -f)
+      FILE="${2:-}"
+      if [[ -z "$FILE" ]]; then echo -e "${RED}Error:${NC} -f requiere un fichero"; exit 1; fi
+      if [[ ! -f "$FILE" ]]; then echo -e "${RED}Error:${NC} Fichero no encontrado: $FILE"; exit 1; fi
+      shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) echo -e "${RED}Opción desconocida:${NC} $1"; usage; exit 1 ;;
   esac
 done
-
-if [ $# -lt 1 ]; then usage; exit 1; fi
 
 # Construir lista de pares VMID→HOSTNAME
 declare -a VMIDS=()
 declare -A HOSTNAMES=()
 
 USE_PREFIX_SUFFIX=0
-if [[ -n "$NAME_PREFIX" || -n "$NAME_SUFFIX" ]]; then
+
+if [[ -n "$FILE" ]]; then
+  # Modo fichero: vmid:hostname por línea
+  while IFS= read -r line; do
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
+    VMID_TMP=$(echo "$line" | cut -d: -f1 | xargs)
+    HOST_TMP=$(echo "$line" | cut -d: -f2 | xargs)
+    if [[ -z "$VMID_TMP" || -z "$HOST_TMP" ]]; then
+      echo -e "${YELLOW}[!]${NC} Línea ignorada (formato incorrecto): $line"
+      continue
+    fi
+    VMIDS+=("$VMID_TMP")
+    HOSTNAMES["$VMID_TMP"]="$HOST_TMP"
+  done < "$FILE"
+  if [ ${#VMIDS[@]} -eq 0 ]; then
+    echo -e "${RED}Error:${NC} No se encontraron entradas válidas en $FILE"; exit 1
+  fi
+elif [[ -n "$NAME_PREFIX" || -n "$NAME_SUFFIX" ]]; then
   USE_PREFIX_SUFFIX=1
+  if [ $# -lt 1 ]; then usage; exit 1; fi
   VMIDS=("$@")
 else
-  # Modo pares: vmid1 hostname1 vmid2 hostname2 ...
+  if [ $# -lt 1 ]; then usage; exit 1; fi
   if (( $# % 2 != 0 )); then
     echo -e "${RED}Error:${NC} Se esperan pares vmid hostname (número par de argumentos)"
     usage; exit 1
