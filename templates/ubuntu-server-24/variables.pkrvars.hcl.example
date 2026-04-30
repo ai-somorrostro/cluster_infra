@@ -1,0 +1,21 @@
+# Proxmox API — create a token: Datacenter > Permissions > API Tokens
+proxmox_api_url          = "https://192.168.136.238:8006/api2/json"
+proxmox_api_token_id     = "root@pam!infra"       # user@realm!tokenid
+proxmox_api_token_secret = "YOUR_API_TOKEN_SECRET"
+
+# FILL IN: Proxmox node name (check Datacenter > Nodes)
+proxmox_node = "kalimdor"
+
+# FILL IN: VM ID for the base template (must be free on Proxmox)
+vm_id = 9000
+
+# Storage where Packer builds — temporary, distribute moves it to ssd-data afterwards
+primary_storage = "local-lvm"
+
+# FILL IN: ISO path on Proxmox — format: storage-name:iso/filename.iso
+iso_file = "ssd-data:iso/ubuntu-24.04.3-live-server-amd64.iso"
+
+
+# FILL IN: plaintext password for telecomunicaciones user
+# Must match the hash you put in http/user-data
+telecomunicaciones_password = "YOUR_PASSWORD"

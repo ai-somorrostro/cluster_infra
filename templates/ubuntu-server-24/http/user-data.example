@@ -1,0 +1,30 @@
+#cloud-config
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: es
+  storage:
+    layout:
+      name: lvm
+      match:
+        size: largest
+  identity:
+    hostname: ubuntu-template
+    username: telecomunicaciones
+    # FILL IN: generate with: openssl passwd -6 'yourpassword'
+    password: "$6$eKhG1RFXXfcrBOgD$cnNNasB37VWuz6YzEl9heAYAFVBwTrigg4VI2U2OixT8YLLXVRM0VIZkPCW5fXBfXCboJwixxT/pb723rCWlS."
+  ssh:
+    install-server: true
+    authorized-keys:
+      # FILL IN: your SSH public key
+      - "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCsnhqR+X6B3KjJ8Iy7nphmKyO1vISa0zPx0wGIr/qgMyZc7EI2D//6mxV+BPTk20bgKVHZY+yEYEyRwmOq7w+MJQd4GcFzn07l47l9tZPLXCUidzHFt6xEEFQXJJDptEJ0kH+Mv2um4dHJFhlrg91UQ5BKVEzv8it3Q1yjaiN0phNM9QlC7Zc9fiw3rT7EYcaDgYXEuP1ojLjY1q341nr7TGwOj+Xh0f8/d5BuapJjNXEWHAOPEm5+FZ+Fwbym+0+I8L23LONOA0Oay+LjZhHB2+Xsotm1C+Ngkmpl1pakwM6l3qbari3IVbU/1Y3Yjxr9m5YWE3wK0NPPJlwQJZPn6s6F4emr0FH0yvkg37FpiRbmg1xBv8irI1xH9C/l6GGmkGTA2TYPYsI0bCM2Tqz8R4QbRMZmajqI40ePvqxPJZWJ2Oxzy/73UUsz4iMhsfP1I3FQer+VCy7XcjjFp5FnNiqmZUDFvuHP3dDo5bi31cRTLRTwJip9X5nowQ/L5zLALh3K50OO2VeWA85bTkLqF3tp0hR5oIW2INjTT/FzkUpMmuTlbozXS6t1vOaHe+Uqby/zvnx/dsIQ557t3B+zOSt2xQbuTTtvNjXRF4F435P3qr/jFvnCWQZAtlEd2w9ywpoK22HuBH1+M3O/kr95ZPUWNCjEZk2T/eKw/ZpNNw== mikel@flea
+"
+    allow-pw: true
+  packages:
+    - qemu-guest-agent
+  late-commands:
+    - echo 'telecomunicaciones ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/telecomunicaciones
+    - chmod 440 /target/etc/sudoers.d/telecomunicaciones
+    - curtin in-target --target=/target -- systemctl enable qemu-guest-agent
+    - curtin in-target --target=/target -- systemctl start qemu-guest-agent
