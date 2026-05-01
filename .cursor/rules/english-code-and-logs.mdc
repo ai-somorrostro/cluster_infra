@@ -1,0 +1,11 @@
+---
+description: Keep project code, comments, logs, and documentation in English
+alwaysApply: true
+---
+
+# English Project Language
+
+- Write all code comments, shell output, debug messages, error messages, CLI usage text, and documentation in English.
+- Do not add new Spanish text to source files, scripts, READMEs, examples, or operational logs.
+- Preserve external command names, variable names, and user-provided secrets/identifiers as-is.
+- When touching existing Spanish text in files, translate the nearby edited text to English.

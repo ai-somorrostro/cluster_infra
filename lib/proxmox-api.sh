@@ -4,9 +4,27 @@
 # Required env vars:
 #   PROXMOX_API_URL, PROXMOX_API_TOKEN_ID, PROXMOX_API_TOKEN_SECRET
 # Optional:
+#   PROXMOX_ENV_FILE - .env path to load before reading credentials.
 #   VARS_FILE - Packer-style pkrvars file used as fallback for the same keys.
 
 set -euo pipefail
+
+PVE_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PVE_REPO_ROOT="$(cd -- "${PVE_LIB_DIR}/.." && pwd)"
+PVE_ENV_FILE="${PROXMOX_ENV_FILE:-${PVE_REPO_ROOT}/.env}"
+
+pve_load_env_file() {
+  local env_file="$1"
+
+  [ -f "$env_file" ] || return 0
+
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_file"
+  set +a
+}
+
+pve_load_env_file "$PVE_ENV_FILE"
 
 PVE_API_URL="${PROXMOX_API_URL:-}"
 PVE_TOKEN_ID="${PROXMOX_API_TOKEN_ID:-}"
@@ -199,18 +217,14 @@ pve_guest_exec_wait() {
 }
 
 pve_guest_exec_output() {
-  python3 -c 'import base64,json,sys
+  python3 -c 'import json,sys
 data = json.load(sys.stdin).get("data", {})
 for key in ("out-data", "err-data"):
     value = data.get(key)
     if not value:
         continue
-    try:
-        decoded = base64.b64decode(value).decode("utf-8", "replace")
-    except Exception:
-        decoded = value
     stream = sys.stdout if key == "out-data" else sys.stderr
-    print(decoded, end="" if decoded.endswith("\n") else "\n", file=stream)'
+    print(value, end="" if value.endswith("\n") else "\n", file=stream)'
 }
 
 pve_init
