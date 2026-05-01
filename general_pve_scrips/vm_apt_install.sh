@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# vm_apt_install.sh - Instala paquetes apt en VMs usando la API de Proxmox.
-# Puede ejecutarse desde un contenedor provisioner; no requiere pvesh/qm locales.
+# vm_apt_install.sh - Install apt packages on VMs through the Proxmox API.
+# Can run from a provisioner container; does not require local pvesh/qm.
 
 set -euo pipefail
 
@@ -17,16 +17,16 @@ VMIDS=()
 PACKAGES=()
 
 usage() {
-  echo "Uso: $0 [--with-docker] <vmid1> [vmid2] ... -- <paquete1> [paquete2] ..."
-  echo "Ejemplo: $0 100 101 102 -- vim curl htop"
-  echo "Ejemplo: $0 --with-docker 100 -- vim curl htop"
+  echo "Usage: $0 [--with-docker] <vmid1> [vmid2] ... -- <package1> [package2] ..."
+  echo "Example: $0 100 101 102 -- vim curl htop"
+  echo "Example: $0 --with-docker 100 -- vim curl htop"
   echo ""
-  echo "Credenciales:"
+  echo "Credentials:"
   echo "  export PROXMOX_API_URL=https://pve:8006/api2/json"
   echo "  export PROXMOX_API_TOKEN_ID='root@pam!infra'"
   echo "  export PROXMOX_API_TOKEN_SECRET='...'"
   echo ""
-  echo "También puedes usar VARS_FILE=variables.pkrvars.hcl como fallback."
+  echo "You can also use VARS_FILE=variables.pkrvars.hcl as a fallback."
 }
 
 shell_join() {
@@ -74,12 +74,12 @@ parse_args() {
   done
 
   if [ ${#VMIDS[@]} -eq 0 ]; then
-    echo -e "${RED}Error:${NC} Debes especificar al menos un VMID" >&2
+    echo -e "${RED}Error:${NC} You must specify at least one VMID" >&2
     exit 1
   fi
 
   if [ ${#PACKAGES[@]} -eq 0 ]; then
-    echo -e "${RED}Error:${NC} Debes especificar al menos un paquete" >&2
+    echo -e "${RED}Error:${NC} You must specify at least one package" >&2
     exit 1
   fi
 }
@@ -116,7 +116,7 @@ detect_vm() {
   local vm_info
 
   if ! vm_info="$(pve_find_vm "$VMID")"; then
-    echo -e "${RED}[✗]${NC} No se encuentra la VM $VMID en el cluster."
+    echo -e "${RED}[ERROR]${NC} VM $VMID was not found in the cluster."
     return 1
   fi
 
@@ -125,7 +125,7 @@ detect_vm() {
   VM_TYPE="$(echo "$vm_info" | cut -d'|' -f3)"
 
   if [ "$VM_TYPE" != "qemu" ]; then
-    echo -e "${RED}[✗]${NC} VMID $VMID no es QEMU (type: $VM_TYPE)."
+    echo -e "${RED}[ERROR]${NC} VMID $VMID is not a QEMU VM (type: $VM_TYPE)."
     return 1
   fi
 }
@@ -139,144 +139,144 @@ verify_vm_ready() {
   agent="$(echo "$fields" | cut -d'|' -f2)"
 
   if [ "$status" != "running" ]; then
-    echo -e "${RED}[✗]${NC} VM $VMID no está corriendo (status: $status)"
+    echo -e "${RED}[ERROR]${NC} VM $VMID is not running (status: $status)"
     return 1
   fi
 
-  echo -e "${GREEN}[✓]${NC} VM corriendo"
+  echo -e "${GREEN}[OK]${NC} VM is running"
 
   if [ "$agent" = "0" ] || [ "$agent" = "False" ] || [ "$agent" = "None" ]; then
-    echo -e "${RED}[✗]${NC} qemu-guest-agent no está habilitado en Proxmox"
+    echo -e "${RED}[ERROR]${NC} qemu-guest-agent is not enabled in Proxmox"
     return 1
   fi
 
-  echo -e "${GREEN}[✓]${NC} qemu-guest-agent habilitado"
+  echo -e "${GREEN}[OK]${NC} qemu-guest-agent is enabled"
 
   if ! guest_run_quiet 30 "true"; then
-    echo -e "${RED}[✗]${NC} qemu-guest-agent no responde dentro de la VM"
+    echo -e "${RED}[ERROR]${NC} qemu-guest-agent is not responding inside the VM"
     return 1
   fi
 
-  echo -e "${GREEN}[✓]${NC} qemu-guest-agent responde"
+  echo -e "${GREEN}[OK]${NC} qemu-guest-agent is responding"
 }
 
 install_docker() {
-  echo -e "\n${YELLOW}[*]${NC} Instalando Docker (método oficial)..."
+  echo -e "\n${YELLOW}[*]${NC} Installing Docker using the official method..."
 
-  echo -e "${YELLOW}[*]${NC} Instalando prerequisitos..."
+  echo -e "${YELLOW}[*]${NC} Installing prerequisites..."
   if ! guest_run_quiet 300 "sh" "-c" "DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl"; then
-    echo -e "${RED}[✗]${NC} Error instalando prerequisitos"
+    echo -e "${RED}[ERROR]${NC} Failed to install prerequisites"
     return 1
   fi
-  echo -e "${GREEN}[✓]${NC} Prerequisitos instalados"
+  echo -e "${GREEN}[OK]${NC} Prerequisites installed"
 
-  echo -e "${YELLOW}[*]${NC} Configurando repositorio de Docker..."
+  echo -e "${YELLOW}[*]${NC} Configuring Docker repository..."
   if ! guest_run_quiet 60 "install" "-m" "0755" "-d" "/etc/apt/keyrings"; then
-    echo -e "${RED}[✗]${NC} Error creando /etc/apt/keyrings"
+    echo -e "${RED}[ERROR]${NC} Failed to create /etc/apt/keyrings"
     return 1
   fi
 
   if ! guest_run_quiet 120 "sh" "-c" "curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc"; then
-    echo -e "${RED}[✗]${NC} Error descargando GPG key de Docker"
+    echo -e "${RED}[ERROR]${NC} Failed to download Docker GPG key"
     return 1
   fi
 
   if ! guest_run_quiet 30 "chmod" "a+r" "/etc/apt/keyrings/docker.asc"; then
-    echo -e "${RED}[✗]${NC} Error configurando permisos de GPG key"
+    echo -e "${RED}[ERROR]${NC} Failed to set GPG key permissions"
     return 1
   fi
 
   local repo_cmd
   repo_cmd='echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list'
   if ! guest_run_quiet 60 "sh" "-c" "$repo_cmd"; then
-    echo -e "${RED}[✗]${NC} Error añadiendo repositorio de Docker"
+    echo -e "${RED}[ERROR]${NC} Failed to add Docker repository"
     return 1
   fi
-  echo -e "${GREEN}[✓]${NC} Repositorio configurado"
+  echo -e "${GREEN}[OK]${NC} Repository configured"
 
-  echo -e "${YELLOW}[*]${NC} Actualizando cache de apt..."
+  echo -e "${YELLOW}[*]${NC} Updating apt cache..."
   if ! guest_run_quiet 600 "apt-get" "update"; then
-    echo -e "${RED}[✗]${NC} Error actualizando apt"
+    echo -e "${RED}[ERROR]${NC} Failed to update apt"
     return 1
   fi
-  echo -e "${GREEN}[✓]${NC} Cache actualizado"
+  echo -e "${GREEN}[OK]${NC} Cache updated"
 
-  echo -e "${YELLOW}[*]${NC} Instalando paquetes de Docker..."
+  echo -e "${YELLOW}[*]${NC} Installing Docker packages..."
   if ! guest_run_quiet 900 "sh" "-c" "DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"; then
-    echo -e "${RED}[✗]${NC} Error instalando Docker"
+    echo -e "${RED}[ERROR]${NC} Failed to install Docker"
     return 1
   fi
-  echo -e "${GREEN}[✓]${NC} Docker instalado"
+  echo -e "${GREEN}[OK]${NC} Docker installed"
 
-  echo -e "${YELLOW}[*]${NC} Verificando instalación de Docker..."
+  echo -e "${YELLOW}[*]${NC} Verifying Docker installation..."
   if guest_run 30 "docker" "--version"; then
-    echo -e "${GREEN}[✓]${NC} Docker instalado correctamente"
+    echo -e "${GREEN}[OK]${NC} Docker installed correctly"
     return 0
   fi
 
-  echo -e "${RED}[✗]${NC} Docker no responde correctamente"
+  echo -e "${RED}[ERROR]${NC} Docker is not responding correctly"
   return 1
 }
 
 process_vm() {
   echo -e "\n${YELLOW}==========================================${NC}"
-  echo "Detectando ubicación de la VM $VMID..."
+  echo "Detecting VM $VMID location..."
 
   if ! detect_vm; then
     return 0
   fi
 
-  echo "Nodo: $NODE | Nombre: $VM_NAME"
+  echo "Node: $NODE | Name: $VM_NAME"
   echo "VMID: $VMID"
-  echo "Paquetes: ${PACKAGES[*]}"
+  echo "Packages: ${PACKAGES[*]}"
   echo -e "${YELLOW}==========================================${NC}"
 
-  echo -e "\n${YELLOW}[*]${NC} Verificando VM..."
+  echo -e "\n${YELLOW}[*]${NC} Verifying VM..."
   if ! verify_vm_ready; then
     return 0
   fi
 
-  echo -e "\n${YELLOW}[*]${NC} Aplicando correcciones preventivas (sources.list)..."
+  echo -e "\n${YELLOW}[*]${NC} Applying preventive sources.list fixes..."
   if guest_run_quiet 30 "sh" "-c" "sed -i '/^deb cdrom/s/^/#/' /etc/apt/sources.list 2>/dev/null || true"; then
-    echo -e "${GREEN}[✓]${NC} Sources.list corregido (CDROM desactivado si existía)"
+    echo -e "${GREEN}[OK]${NC} sources.list fixed (CDROM disabled if present)"
   else
-    echo -e "${YELLOW}[!]${NC} No se pudo modificar sources.list (no crítico)"
+    echo -e "${YELLOW}[WARN]${NC} Could not modify sources.list (non-critical)"
   fi
 
-  echo -e "${YELLOW}[*]${NC} Verificando conectividad a internet..."
+  echo -e "${YELLOW}[*]${NC} Checking internet connectivity..."
   if guest_run_quiet 30 "ping" "-c" "1" "8.8.8.8"; then
-    echo -e "${GREEN}[✓]${NC} Internet OK"
+    echo -e "${GREEN}[OK]${NC} Internet OK"
   else
-    echo -e "${YELLOW}[!]${NC} Ping falló; continúo por si apt sale por proxy o ICMP está bloqueado"
+    echo -e "${YELLOW}[WARN]${NC} Ping failed; continuing in case apt uses a proxy or ICMP is blocked"
   fi
 
-  echo -e "${YELLOW}[*]${NC} Limpiando locks anteriores..."
+  echo -e "${YELLOW}[*]${NC} Cleaning stale locks..."
   guest_run_quiet 60 "sh" "-c" "rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock* /var/lib/dpkg/lock-frontend" || true
   guest_run_quiet 180 "dpkg" "--configure" "-a" || true
 
-  echo -e "\n${YELLOW}[*]${NC} Actualizando cache de apt..."
+  echo -e "\n${YELLOW}[*]${NC} Updating apt cache..."
   if ! guest_run 900 "apt-get" "update"; then
-    echo -e "${RED}[✗]${NC} Error en apt update"
+    echo -e "${RED}[ERROR]${NC} apt update failed"
     return 0
   fi
-  echo -e "${GREEN}[✓]${NC} Cache actualizado"
+  echo -e "${GREEN}[OK]${NC} Cache updated"
 
-  echo -e "\n${YELLOW}[*]${NC} Instalando paquetes..."
+  echo -e "\n${YELLOW}[*]${NC} Installing packages..."
   local install_cmd
   install_cmd="DEBIAN_FRONTEND=noninteractive apt-get install -y $(shell_join "${PACKAGES[@]}")"
   if ! guest_run 1200 "sh" "-c" "$install_cmd"; then
-    echo -e "${RED}[✗]${NC} Error en apt install"
+    echo -e "${RED}[ERROR]${NC} apt install failed"
     return 0
   fi
-  echo -e "${GREEN}[✓]${NC} Instalación completada"
+  echo -e "${GREEN}[OK]${NC} Installation completed"
 
-  echo -e "\n${YELLOW}[*]${NC} Verificando instalación..."
+  echo -e "\n${YELLOW}[*]${NC} Verifying installation..."
   local pkg
   for pkg in "${PACKAGES[@]}"; do
     if guest_run_quiet 30 "dpkg-query" "-W" "-f=\${Status}" "$pkg"; then
-      echo -e "${GREEN}[✓]${NC} $pkg instalado"
+      echo -e "${GREEN}[OK]${NC} $pkg installed"
     else
-      echo -e "${RED}[✗]${NC} $pkg no parece instalado"
+      echo -e "${RED}[ERROR]${NC} $pkg does not look installed"
     fi
   done
 
@@ -284,7 +284,7 @@ process_vm() {
     install_docker || true
   fi
 
-  echo -e "\n${YELLOW}[*]${NC} VM $VMID procesada"
+  echo -e "\n${YELLOW}[*]${NC} VM $VMID processed"
 }
 
 parse_args "$@"
@@ -292,7 +292,7 @@ source "${SCRIPT_DIR}/../lib/proxmox-api.sh"
 
 for VMID in "${VMIDS[@]}"; do
   if [[ ! "$VMID" =~ ^[0-9]+$ ]]; then
-    echo -e "${RED}[✗]${NC} VMID inválido: $VMID"
+    echo -e "${RED}[ERROR]${NC} Invalid VMID: $VMID"
     continue
   fi
 
@@ -303,5 +303,5 @@ for VMID in "${VMIDS[@]}"; do
 done
 
 echo -e "\n${GREEN}==========================================${NC}"
-echo "Proceso completado"
+echo "Process completed"
 echo -e "==========================================${NC}"
