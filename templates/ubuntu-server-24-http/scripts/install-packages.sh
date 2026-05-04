@@ -23,13 +23,16 @@ apt-get update
 apt-get install -y \
   apt-transport-https \
   ca-certificates \
+  cowsay \
   curl \
   dnsutils \
   fail2ban \
+  fortune-mod \
   git \
   gnupg \
   htop \
   jq \
+  lolcat \
   net-tools \
   nfs-common \
   qemu-guest-agent \

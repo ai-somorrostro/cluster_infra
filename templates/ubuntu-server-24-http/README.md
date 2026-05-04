@@ -5,6 +5,13 @@ Ubuntu Server 24.04 template for Proxmox built with Packer autoinstall over Pack
 Prerequisites:
 ubuntu-server iso file in storage:iso/ubuntu-24.04.3-live-server-amd64.iso
 
+features of the template:
+- Ubuntu Server 24.04 LTS
+- HTTP autoinstall
+- Cloud-init
+- DHCP
+- password expiration
+- custom MOTD
 
 ## Build
 

@@ -158,6 +158,16 @@ build {
     destination = "/tmp/iab-banner.txt"
   }
 
+  provisioner "file" {
+    source      = "files/iab-expire-cloudinit-password.sh"
+    destination = "/tmp/iab-expire-cloudinit-password"
+  }
+
+  provisioner "file" {
+    source      = "files/iab-expire-cloudinit-password.service"
+    destination = "/tmp/iab-expire-cloudinit-password.service"
+  }
+
   provisioner "shell" {
     inline = [
       "sudo install -d -o root -g root -m 0755 /etc/iab-cluster",
@@ -166,6 +176,15 @@ build {
       "sudo find /etc/update-motd.d ! -name 10-iab-cluster -exec chmod -x {} +",
       "if [ -f /etc/default/motd-news ]; then sudo sed -i 's/^ENABLED=.*/ENABLED=0/' /etc/default/motd-news; fi",
       "sudo rm -f /tmp/10-iab-cluster /tmp/iab-banner.txt",
+    ]
+  }
+
+  provisioner "shell" {
+    inline = [
+      "sudo install -o root -g root -m 0755 /tmp/iab-expire-cloudinit-password /usr/local/sbin/iab-expire-cloudinit-password",
+      "sudo install -o root -g root -m 0644 /tmp/iab-expire-cloudinit-password.service /etc/systemd/system/iab-expire-cloudinit-password.service",
+      "sudo systemctl enable iab-expire-cloudinit-password.service",
+      "sudo rm -f /tmp/iab-expire-cloudinit-password /tmp/iab-expire-cloudinit-password.service",
     ]
   }
 
