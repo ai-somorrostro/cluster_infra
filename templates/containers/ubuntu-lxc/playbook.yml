@@ -1,0 +1,209 @@
+---
+- name: Bake baseline software into LXC template
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    admin_user: telecomunicaciones
+    # Override at runtime if desired:
+    #   ADMIN_PASSWORD='your-clear-password' ./build.sh   # hashed by build.sh
+    #   ADMIN_PASSWORD_HASH='$6$....' ansible-playbook ...
+    # Precomputed SHA-512 hash for default password "mvpeqcv".
+    admin_password_hash: "{{ lookup('env', 'ADMIN_PASSWORD_HASH') | default('$6$Zytdg8/7oD./DaUK$fF/ReXsm5kYhAw8pxrNdCY5Jwj7hhwRuZyVrE8oqSZ2LSOYB5NtRW4XBdAw/WfrRLEOdaQZ.LsZvvw5C8.e4I.', true) }}"
+    # `build.sh` injects `ADMIN_SSH_PUBKEY` from `SSH_PUBKEY` (pubkey file path).
+    # Fallback is to read `~/.ssh/id_ed25519.pub` inside the environment where ansible runs.
+    admin_ssh_key: >-
+      {{ lookup('env', 'ADMIN_SSH_PUBKEY')
+         | default(lookup('file', lookup('env', 'HOME') + '/.ssh/id_ed25519.pub'), true) }}
+    timezone: Europe/Madrid
+    docker_arch_map:
+      x86_64: amd64
+      aarch64: arm64
+      armv7l: armhf
+    docker_arch: "{{ docker_arch_map.get(ansible_architecture, ansible_architecture) }}"
+    base_packages:
+      - vim
+      - htop
+      - curl
+      - wget
+      - git
+      - tmux
+      - jq
+      - sudo
+      - ca-certificates
+      - gnupg
+      - lsb-release
+      - net-tools
+      - dnsutils
+      - unzip
+      - rsync
+
+  tasks:
+    - name: Apt update + dist-upgrade
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+        cache_valid_time: 0
+
+    - name: Install baseline packages
+      ansible.builtin.apt:
+        name: "{{ base_packages }}"
+        state: present
+
+    - name: Set timezone
+      community.general.timezone:
+        name: "{{ timezone }}"
+
+    - name: Create admin user
+      ansible.builtin.user:
+        name: "{{ admin_user }}"
+        shell: /bin/bash
+        groups: sudo
+        append: true
+        password: "{{ admin_password_hash }}"
+
+    - name: Authorize SSH key for admin
+      ansible.posix.authorized_key:
+        user: "{{ admin_user }}"
+        key: "{{ admin_ssh_key }}"
+
+    - name: Ensure SSH password auth is enabled
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication\s+'
+        line: 'PasswordAuthentication yes'
+        create: false
+      notify: Restart ssh
+
+    - name: Ensure SSH public key auth is enabled
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PubkeyAuthentication\s+'
+        line: 'PubkeyAuthentication yes'
+        create: false
+      notify: Restart ssh
+
+    - name: Passwordless sudo for admin
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/90-admin
+        content: "{{ admin_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        mode: '0440'
+        validate: 'visudo -cf %s'
+
+    - name: Ensure IAB banner directory exists
+      ansible.builtin.file:
+        path: /etc/iab-cluster
+        state: directory
+        mode: '0755'
+
+    - name: Install IAB MOTD script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../motds/iab/iab-cluster.sh"
+        dest: /usr/local/bin/iab-cluster-motd
+        mode: '0755'
+
+    - name: Install IAB MOTD banner text
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../motds/iab/banner.txt"
+        dest: /etc/iab-cluster/banner.txt
+        mode: '0644'
+
+    - name: Print IAB MOTD on interactive login (once)
+      ansible.builtin.copy:
+        dest: /etc/profile.d/99-iab-cluster-motd.sh
+        mode: '0644'
+        content: |
+          #!/usr/bin/env bash
+          case "$-" in
+            *i*) ;;
+            *) return 0 ;;
+          esac
+          if [ -n "${IAB_MOTD_SHOWN:-}" ]; then
+            return 0
+          fi
+          export IAB_MOTD_SHOWN=1
+          if [ -x /usr/local/bin/iab-cluster-motd ]; then
+            /usr/local/bin/iab-cluster-motd || true
+          fi
+
+    - name: Install Docker Engine + Compose (official repo)
+      block:
+        - name: Install Docker repo prerequisites
+          ansible.builtin.apt:
+            name:
+              - ca-certificates
+              - curl
+              - gnupg
+            state: present
+            update_cache: true
+
+        - name: Ensure Docker apt keyring directory exists
+          ansible.builtin.file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: '0755'
+
+        - name: Add Docker apt signing key
+          ansible.builtin.get_url:
+            url: "https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg"
+            dest: /etc/apt/keyrings/docker.asc
+            mode: '0644'
+
+        - name: Add Docker apt repository
+          ansible.builtin.apt_repository:
+            repo: >-
+              deb [arch={{ docker_arch }} signed-by=/etc/apt/keyrings/docker.asc]
+              https://download.docker.com/linux/{{ ansible_distribution | lower }}
+              {{ ansible_distribution_release }} stable
+            filename: docker
+            state: present
+
+        - name: Install Docker packages
+          ansible.builtin.apt:
+            name:
+              - docker-ce
+              - docker-ce-cli
+              - containerd.io
+              - docker-buildx-plugin
+              - docker-compose-plugin
+            state: present
+            update_cache: true
+
+        - name: Enable and start Docker
+          ansible.builtin.service:
+            name: docker
+            enabled: true
+            state: started
+
+        - name: Add admin user to docker group
+          ansible.builtin.user:
+            name: "{{ admin_user }}"
+            groups: docker
+            append: true
+
+    # ---------------------------------------------------------------
+    # Add your own "to-go" software below. Examples:
+    # ---------------------------------------------------------------
+    #
+    # - name: Install Docker
+    #   ansible.builtin.shell: curl -fsSL https://get.docker.com | sh
+    #   args:
+    #     creates: /usr/bin/docker
+    #
+    # - name: Install Node.js 20
+    #   block:
+    #     - ansible.builtin.shell: curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    #       args: { creates: /etc/apt/sources.list.d/nodesource.list }
+    #     - ansible.builtin.apt: { name: nodejs, state: present }
+    #
+    # - name: Install Tailscale
+    #   ansible.builtin.shell: curl -fsSL https://tailscale.com/install.sh | sh
+    #   args:
+    #     creates: /usr/sbin/tailscaled
+
+  handlers:
+    - name: Restart ssh
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
