@@ -2,6 +2,10 @@
 
 # vm_enable_password_ssh.sh - Fuerza habilitar password SSH
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../lib/pve-load-env.sh"
+
 if [ $# -lt 2 ]; then
     echo "Uso: $0 <nodo> <vmid>"
     exit 1

@@ -4,6 +4,8 @@
 # This script only expands the partition, LVM volume, and filesystem inside the VM.
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../lib/pve-load-env.sh"
 
 VM_IDS="${1:-}"
 

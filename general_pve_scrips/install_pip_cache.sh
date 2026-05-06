@@ -1,5 +1,9 @@
 #!/bin/bash
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../lib/pve-load-env.sh"
+
 # Configuracion
 VM_IDS=$1
 CACHE_DIR="${2:-/opt/pip-cache}"
