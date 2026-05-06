@@ -10,54 +10,19 @@
 set -euo pipefail
 
 PVE_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PVE_REPO_ROOT="$(cd -- "${PVE_LIB_DIR}/.." && pwd)"
-PVE_ENV_FILE="${PROXMOX_ENV_FILE:-${PVE_REPO_ROOT}/.env}"
-
-pve_load_env_file() {
-  local env_file="$1"
-
-  [ -f "$env_file" ] || return 0
-
-  set -a
-  # shellcheck disable=SC1090
-  source "$env_file"
-  set +a
-}
-
-pve_load_env_file "$PVE_ENV_FILE"
+# shellcheck disable=SC1091
+source "${PVE_LIB_DIR}/pve-load-env.sh"
 
 PVE_API_URL="${PROXMOX_API_URL:-}"
 PVE_TOKEN_ID="${PROXMOX_API_TOKEN_ID:-}"
 PVE_TOKEN_SECRET="${PROXMOX_API_TOKEN_SECRET:-}"
 PVE_VARS_FILE="${VARS_FILE:-}"
 
-pve_read_var() {
-  local key="$1"
-  local path="$2"
-
-  [ -f "$path" ] || return 0
-
-  python3 - "$key" "$path" <<'PY'
-import re
-import sys
-
-key, path = sys.argv[1:3]
-pattern = re.compile(r'^\s*' + re.escape(key) + r'\s*=\s*(?:"([^"]*)"|(\d+))')
-
-with open(path, encoding="utf-8") as handle:
-    for line in handle:
-        match = pattern.match(line)
-        if match:
-            print(match.group(1) or match.group(2))
-            break
-PY
-}
-
 pve_init() {
   if [ -n "$PVE_VARS_FILE" ]; then
-    PVE_API_URL="${PVE_API_URL:-$(pve_read_var proxmox_api_url "$PVE_VARS_FILE")}"
-    PVE_TOKEN_ID="${PVE_TOKEN_ID:-$(pve_read_var proxmox_api_token_id "$PVE_VARS_FILE")}"
-    PVE_TOKEN_SECRET="${PVE_TOKEN_SECRET:-$(pve_read_var proxmox_api_token_secret "$PVE_VARS_FILE")}"
+    PVE_API_URL="${PVE_API_URL:-$(pve_read_pkrvar proxmox_api_url "$PVE_VARS_FILE")}"
+    PVE_TOKEN_ID="${PVE_TOKEN_ID:-$(pve_read_pkrvar proxmox_api_token_id "$PVE_VARS_FILE")}"
+    PVE_TOKEN_SECRET="${PVE_TOKEN_SECRET:-$(pve_read_pkrvar proxmox_api_token_secret "$PVE_VARS_FILE")}"
   fi
 
   if [ -z "$PVE_API_URL" ] || [ -z "$PVE_TOKEN_ID" ] || [ -z "$PVE_TOKEN_SECRET" ]; then
