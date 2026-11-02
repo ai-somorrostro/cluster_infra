@@ -1,5 +1,33 @@
+# ── Secrets and local data: NEVER commit ──
 .env
 .env.*
 !.env.example
+config/clusters.conf
 ssh-keys/
+users.txt
+groups.txt
+usuarios.*
+*.pkrvars.hcl
+!*.pkrvars.example.hcl
+**/http/user-data
+telecomunicaciones/mikrotik_management/wireward_generator/configs/
+telecomunicaciones/mikrotik_management/wireward_generator/comandos/
+telecomunicaciones/mikrotik_management/wireward_generator/generar_vpn.sh
+configs.7z
+
+# ── Local tools ──
 .cursor/
+.claude/settings.local.json
+**/.claude/settings.local.json
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.history/
+
+# ── Junk ──
+*~
+*.swp
+.directory
+.Trash-*
+.nfs*
+.fuse_hidden*
