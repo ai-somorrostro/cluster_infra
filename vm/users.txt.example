@@ -1,0 +1,4 @@
+# username:password — one per line. Copy this file to users.txt (which is NOT committed).
+# The password reaches the VM through stdin (chpasswd), never on the command line.
+student01:ChangeMe123
+student02:ChangeMe123

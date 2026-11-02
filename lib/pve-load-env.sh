@@ -18,7 +18,7 @@ if [ -f "${PROXMOX_ENV_FILE}" ]; then
   set +a
 fi
 
-_default_pkrvars="${PVE_REPO_ROOT}/templates/ubuntu-server-24-http/variables.pkrvars.hcl"
+_default_pkrvars="${PVE_REPO_ROOT}/templates/VMs/ubuntu-server-24-http/variables.pkrvars.hcl"
 if [ -z "${VARS_FILE:-}" ] && [ -f "${_default_pkrvars}" ]; then
   VARS_FILE="${_default_pkrvars}"
 fi
