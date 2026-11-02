@@ -1,0 +1,31 @@
+# config/clusters.conf — OPTIONAL. Only needed for several clusters or fallback nodes.
+# Without it, the vm/ scripts use .env (PROXMOX_API_URL + token) or pvesh on a Proxmox node.
+#
+#   cp config/clusters.conf.example config/clusters.conf   (the real file is NOT committed)
+#
+# Cluster selection (highest priority first):
+#   1. -c / --cluster NAME
+#   2. PVE_CLUSTER environment variable
+#   3. DEFAULT_CLUSTER (below)
+#
+# Per cluster NAME (letters, digits and _ only):
+#   CLUSTER_<NAME>_HOSTS       "node:ip node:ip ..." — the first one that answers is used
+#   CLUSTER_<NAME>_MODE        auto | local | api | ssh   (default: auto)
+#                                auto → local when running on a node of that cluster,
+#                                       api when there is a token, ssh otherwise
+#   CLUSTER_<NAME>_USER        ssh user (default root)
+#   CLUSTER_<NAME>_API_TOKEN   "user@realm!tokenid=secret". For DEFAULT_CLUSTER it falls back to
+#                              PROXMOX_API_TOKEN_ID/_SECRET from .env; $PVE_API_TOKEN overrides all.
+#   CLUSTER_<NAME>_API_PORT    default 8006
+#   CLUSTER_<NAME>_VERIFY_TLS  1 to verify the certificate (default 0: self-signed)
+
+DEFAULT_CLUSTER=azeroth
+
+CLUSTER_azeroth_HOSTS="kalimdor:192.168.136.238 eastkingdoms:192.168.136.226 northrend:192.168.136.178"
+CLUSTER_azeroth_MODE=auto
+CLUSTER_azeroth_USER=root
+
+# Example of a second cluster:
+# CLUSTER_lab_HOSTS="pve-lab:10.0.0.10"
+# CLUSTER_lab_MODE=ssh
+# CLUSTER_lab_API_TOKEN="root@pam!lab=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
