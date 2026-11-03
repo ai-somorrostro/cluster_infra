@@ -18,7 +18,7 @@ syntax:
 	@for f in $(SCRIPTS); do bash -n "$$f" || exit 1; done && echo "bash -n OK"
 
 secrets:
-	@bad=$$(git ls-files | grep -E '(^|/)(\.env|users\.txt|groups\.txt|usuarios\.txt|clusters\.conf|[^/]*\.pkrvars\.hcl|user-data)$$|wireward_generator/configs/' || true); \
+	@bad=$$(git ls-files | grep -E '(^|/)(\.env|users\.txt|groups\.txt|usuarios\.txt|clusters\.conf|[^/]*\.pkrvars\.hcl|user-data)$$|wireward_generator/configs/|^mcp/.*/config\.json$$' || true); \
 	if [ -n "$$bad" ]; then echo "Sensitive files tracked by git:"; echo "$$bad"; exit 1; else echo "secrets OK"; fi
 
 check: syntax lint secrets
