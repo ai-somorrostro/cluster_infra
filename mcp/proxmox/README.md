@@ -13,7 +13,7 @@ This folder only holds configuration. The server itself is the `proxmox-mcp-plus
 | Client | Claude Code, **user** scope (available in every project) |
 | Proxmox | `https://192.168.136.238:8006` (kalimdor) |
 | Cluster | `kalimdor`, `eastkingdoms`, `northrend` |
-| Authentication | API token `root@pam!mcp-token` |
+| Authentication | API token `root@pam!mcp-token`, *Privilege Separation* disabled (same rights as `root@pam`) |
 | TLS | Verified (`verify_ssl: true`) against the cluster CA (`pve-root-ca.pem`) |
 | Shell commands | Disabled (`command_policy.mode: deny_all`, no `ssh` section) |
 
@@ -62,7 +62,9 @@ In the Proxmox web UI: **Datacenter → Permissions → API Tokens → Add**
 - **Token ID:** `mcp-token`
 - Copy the **Secret** (it is shown only once)
 
-If the token has *Privilege Separation* enabled (the default), give it permissions:
+Our token has *Privilege Separation* **disabled** (untick it when creating the token, or edit it later), so it has the same rights as `root@pam`. Keep that in mind: through the MCP, Claude can create, stop and delete VMs.
+
+If you leave *Privilege Separation* enabled (the default), give the token permissions instead:
 **Datacenter → Permissions → Add → API Token Permission**
 
 - **Path:** `/`
