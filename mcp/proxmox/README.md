@@ -118,6 +118,8 @@ chmod 600 config.json
 nano config.json   # paste the secret into auth.token_value
 ```
 
+The secret is also kept in the repo `.env` as `MCP_PROXMOX_TOKEN_ID` / `MCP_PROXMOX_TOKEN_SECRET` (gitignored), so it is not lost if `config.json` is regenerated.
+
 Notes:
 
 - `token_name` is only the ID (`mcp-token`), not `root@pam!mcp-token`.
