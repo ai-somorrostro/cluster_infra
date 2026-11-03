@@ -37,6 +37,10 @@ The `vm/` scripts target this cluster:
 
 See [script-standard.md](script-standard.md#3-which-cluster-the-scripts-target).
 
+## Access from Claude Code (MCP)
+
+The Proxmox MCP server ([`mcp/proxmox/`](../mcp/proxmox/README.md)) talks to the same API with its own token, `root@pam!mcp-token`, separate from the scripts' `root@pam!infra`. TLS is verified against the cluster CA and shell command execution is disabled.
+
 ## To do
 
 - Set up **Ceph** with disks `sdc` and `sdd` of every node for distributed storage and HA.

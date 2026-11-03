@@ -46,6 +46,7 @@ Requirements:
 | NVIDIA drivers inside a VM | `guest/install_nvidia_drivers.sh` (inside the VM) |
 | Build the Ubuntu 24.04 VM template | `templates/VMs/ubuntu-server-24-http/` ([docs/templates.md](docs/templates.md)) |
 | Build the Ubuntu LXC template | `templates/containers/ubuntu-lxc/` ([docs/templates.md](docs/templates.md)) |
+| Manage the cluster from Claude Code (MCP) | `mcp/proxmox/` ([README](mcp/proxmox/README.md)) |
 
 ## Layout
 
@@ -59,6 +60,7 @@ host/          configure a Proxmox node (GPU passthrough)
 guest/         run INSIDE the VMs (the vm/ scripts upload them when needed)
 templates/     VMs/ (Packer) and containers/ (LXC + Ansible)
 motds/         login banner installed by the templates
+mcp/proxmox/   config of the Proxmox MCP server for Claude Code (ProxmoxMCP-Plus)
 telecomunicaciones/  WireGuard VPN on MikroTik and the YOLO training environment
 docs/          documentation
 ```
@@ -71,6 +73,7 @@ docs/          documentation
 - [docs/gpu.md](docs/gpu.md): GPUs (passthrough, drivers, VRAM limit)
 - [docs/templates.md](docs/templates.md): VM and LXC templates
 - [docs/vpn.md](docs/vpn.md): WireGuard VPN for students (MikroTik)
+- [mcp/proxmox/README.md](mcp/proxmox/README.md): Proxmox MCP server for Claude Code (setup and troubleshooting)
 
 ## Maintenance
 
