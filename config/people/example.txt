@@ -1,0 +1,5 @@
+# Users of a course or group: one Linux username per line (nombre.apellido).
+# Lines starting with # and blank lines are ignored.
+# Copy it: cp example.txt <course>.txt. Real files are gitignored (personal data, public repo).
+ane.ejemplo
+jon.prueba

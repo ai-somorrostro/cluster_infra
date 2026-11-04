@@ -54,6 +54,7 @@ Requirements:
 ```
 .env.example   Proxmox API credentials (copy to .env)
 config/        clusters.conf(.example): optional multi-cluster / fallback nodes
+               mig/: MIG + LXD profiles · people/: user lists per course (gitignored)
 lib/           pve_common.sh: shared library of the vm/ and host/ scripts
                proxmox-api.sh, pve-load-env.sh: API helpers and .env loader (also used by templates/)
 vm/            run on a node or on your machine and act on VMs
