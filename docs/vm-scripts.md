@@ -146,6 +146,23 @@ VMs that already are templates are skipped. Asks for confirmation first.
 
 ---
 
+## vm/vm_mig_lxd.sh 🔌 🔁*
+
+MIG + LXD configurator: carves the A800 GPUs of a VM with MIG and gives each LXD container inside it a GPU slice, users and SSH. It works on **one VM described by a TOML file** (`vm = <id>`), not on VMID lists. Full guide: [mig.md](mig.md).
+
+| Command | |
+|---|---|
+| `layouts` | Full MIG layouts of an A800/A100 40GB |
+| `configure CONFIG [VMID]` | whiptail wizard that writes CONFIG, then `plan` |
+| `plan CONFIG [--prune]` | Validation, RAM/disk/CPU checks and diff; changes nothing |
+| `apply CONFIG [--prune]` | Confirm and apply; new passwords go to `CONFIG.credentials` |
+| `status CONFIG\|VMID` | GPUs, slices, containers, SSH ports |
+| `passwd CONFIG CONTAINER USER` | New temporary password |
+
+\* Only when a GPU turns MIG on or off (asks first).
+
+---
+
 ## host/pve_gpu_passthrough.sh
 
 Prepares a **node** for NVIDIA GPU passthrough:
