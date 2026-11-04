@@ -77,6 +77,10 @@ To change the limit, just run the script again: it updates the service.
 
 Tested with a fake `nvidia-smi`: with two 5000 MiB processes and an 8192 MiB limit it kills the most recent one and keeps the other.
 
+## MIG slices per container
+
+To share A800s between several people with guaranteed memory and compute, see [mig.md](mig.md) (`vm/vm_mig_lxd.sh`).
+
 ## YOLO
 
 Docker training environment: [`telecomunicaciones/gpu_utils/yolo-training/`](../telecomunicaciones/gpu_utils/yolo-training/README.md).

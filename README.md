@@ -46,6 +46,7 @@ Requirements:
 | NVIDIA drivers inside a VM | `guest/install_nvidia_drivers.sh` (inside the VM) |
 | Build the Ubuntu 24.04 VM template | `templates/VMs/ubuntu-server-24-http/` ([docs/templates.md](docs/templates.md)) |
 | Build the Ubuntu LXC template | `templates/containers/ubuntu-lxc/` ([docs/templates.md](docs/templates.md)) |
+| Split A800 GPUs (MIG) into LXD containers with users | `vm/vm_mig_lxd.sh configure config/mig/gpu2.toml 106` ([docs/mig.md](docs/mig.md)) |
 | Manage the cluster from Claude Code (MCP) | `mcp/proxmox/` ([README](mcp/proxmox/README.md)) |
 
 ## Layout
@@ -71,6 +72,7 @@ docs/          documentation
 - [docs/vm-scripts.md](docs/vm-scripts.md): reference of every script with examples, and the old → new mapping
 - [docs/cluster.md](docs/cluster.md): the Azeroth cluster (nodes, storage, conventions, to-do)
 - [docs/gpu.md](docs/gpu.md): GPUs (passthrough, drivers, VRAM limit)
+- [docs/mig.md](docs/mig.md): MIG slices per LXD container (configurator, checks, boot restore)
 - [docs/templates.md](docs/templates.md): VM and LXC templates
 - [docs/vpn.md](docs/vpn.md): WireGuard VPN for students (MikroTik)
 - [mcp/proxmox/README.md](mcp/proxmox/README.md): Proxmox MCP server for Claude Code (setup and troubleshooting)

@@ -1,0 +1,47 @@
+# MIG + LXD configurator (vm/vm_mig_lxd.sh). Copy it: cp example.toml gpu2.toml
+# Real files are gitignored: they hold people's names. GB means GiB.
+
+vm = 106                       # Proxmox VMID of the GPU VM
+
+# Disk for the LXD btrfs pool (an extra, empty VM disk; scsi1 here)
+storage_device = "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1"
+ssh_port_base = 2201           # SSH of each container: ssh -p <port> user@<VM IP>
+# memory_reserve = "10GB"      # RAM kept for the VM itself (default: max(8GB, 10%))
+# max_cpu_overcommit = 2.0     # requested vCPUs / VM vCPUs before failing
+
+# GPU index -> full MIG layout, or "whole" (no MIG, one container gets the whole GPU).
+# GPUs not listed are left as they are. List the layouts: vm/vm_mig_lxd.sh layouts
+[gpus]
+0 = "7x1g.5gb"
+1 = "3x2g.10gb,1g.5gb"
+2 = "whole"
+
+[defaults]                     # per container; each container can override them
+cpu = 4
+memory = "8GB"
+disk = "50GB"
+image = "ubuntu:24.04"
+software = ["python", "uv"]    # also "apt:PKG" and "pip:PKG"
+
+[[containers]]
+name = "lab-ana"
+gpu = 0
+profile = "1g.5gb"
+users = ["ana"]
+
+[[containers]]
+name = "grupo-a"
+gpu = 1
+profile = "2g.10gb"
+cpu = 8
+memory = "16GB"
+users = ["luis", "marta"]      # several users can share a container
+
+[[containers]]
+name = "big-model"
+gpu = 2                        # whole GPU: no 'profile'
+cpu = 8
+memory = "32GB"
+disk = "200GB"
+software = ["python", "uv", "pip:vllm"]
+users = ["tecnalia"]

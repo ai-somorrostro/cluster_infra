@@ -701,12 +701,21 @@ guest_write_file() {
 }
 
 # guest_upload VMID LOCAL_FILE REMOTE_PATH [MODE]
+#   Files over ~40 KB go gzip + base64 and are decoded inside the VM (agent/file-write limit).
 guest_upload() {
-  [[ -f "$2" ]] || {
-    log_err "$2 does not exist"
+  local vmid="$1" src="$2" dest="$3" mode="${4:-}"
+  [[ -f "$src" ]] || {
+    log_err "$src does not exist"
     return 1
   }
-  guest_write_file "$1" "$3" "$(cat "$2")"$'\n' "${4:-}"
+  if (($(wc -c <"$src") <= 40000)); then
+    guest_write_file "$vmid" "$dest" "$(cat "$src")"$'\n' "$mode"
+    return
+  fi
+  guest_write_file "$vmid" "$dest.gz.b64" "$(gzip -9c "$src" | base64 -w76)"$'\n' || return 1
+  # shellcheck disable=SC2016  # expanded inside the VM
+  guest_exec "$vmid" sh -c 'base64 -d "$1.gz.b64" | gunzip > "$1" && rm -f "$1.gz.b64"' sh "$dest" || return 1
+  [[ -z "$mode" ]] || guest_exec "$vmid" chmod "$mode" "$dest"
 }
 
 # ─── Steps and summary ───────────────────────────────────────────────────────
