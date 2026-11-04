@@ -357,6 +357,10 @@ def main() -> int:
     elif state.get("installed_config"):
         if yesno(f"{a.config} does not exist, but VM {a.vm} has a config installed.\nStart from it?"):
             cfg = tomllib.loads(state["installed_config"])
+    if cfg.get("lab"):
+        print(f"{a.config} has a [lab] section: the wizard does not edit it yet. Edit the file by hand "
+              "and run 'plan'.", file=sys.stderr)
+        return 1
     m = Model(state, cfg, a.vm)
     try:
         msg(f"VM {a.vm} {a.vm_name}\n\n"

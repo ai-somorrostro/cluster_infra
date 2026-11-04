@@ -45,3 +45,14 @@ memory = "32GB"
 disk = "200GB"
 software = ["python", "uv", "pip:vllm"]
 users = ["tecnalia"]
+
+# [lab]: one container per person, all with the same slice. The GPU of each one is
+# chosen automatically (free slices of 'profile', GPU 0 first); existing containers
+# keep theirs when people are added or removed. Containers are named <prefix><user>.
+# [lab]
+# profile = "1g.5gb"
+# gpus = [0]                         # default: every MIG GPU whose layout has 'profile'
+# prefix = "lab-"
+# users = ["profe"]                  # inline users, added before users_file
+# users_file = "../people/course.txt"  # one per line, relative to this file; '.' -> '_'
+# cpu = 2                            # optional: overrides [defaults] for the lab
