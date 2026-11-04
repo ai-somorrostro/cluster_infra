@@ -11,6 +11,7 @@ it has), compares it with what is in the VM and makes it real.
   mig_lxd.py boot                        at boot: recreate MIG layouts, rebind and start containers
   mig_lxd.py passwd CONTAINER USER       new temporary password (forced change on login)
   mig_lxd.py layouts                     full MIG layouts of an A800/A100 40GB
+  mig_lxd.py expand CONFIG               CONFIG with [lab].users_file read in (no root needed)
 
 Exit codes: 0 OK, 1 error, 3 the config does not pass the checks, 4 a VM restart is needed (MIG mode).
 Only the Python standard library is used. Output is ASCII only (qemu-guest-agent).
@@ -215,7 +216,7 @@ def _count(items) -> dict[str, int]:
 @dataclass
 class CtSpec:
     name: str
-    gpu: int
+    gpu: int | None  # None only for [lab] containers before resolve_lab()
     profile: str | None  # None = whole GPU
     cpu: int
     memory: int
@@ -223,6 +224,13 @@ class CtSpec:
     image: str
     software: list[str]
     users: list[str]
+    lab: bool = False  # generated from [lab]: GPU chosen by resolve_lab()
+
+
+@dataclass
+class Lab:
+    profile: str
+    gpus: list[int]
 
 
 @dataclass
@@ -234,6 +242,39 @@ class Config:
     memory_reserve: int | None
     max_cpu_overcommit: float
     raw: str = ""
+    lab: Lab | None = None
+
+
+def lab_username(name: str) -> str:
+    """Username from a people list: lowercase, '.' -> '_' (nombre.apellido -> nombre_apellido)."""
+    return name.strip().lower().replace(".", "_")
+
+
+def lab_container(prefix: str, user: str) -> str:
+    return (prefix + user.replace("_", "-")).strip("-")[:63].rstrip("-")
+
+
+def read_users_file(path: str) -> list[str]:
+    try:
+        lines = open(path, encoding="utf-8").read().splitlines()
+    except OSError as e:
+        raise ConfigError(f"[lab].users_file: cannot read {path}: {e.strerror}") from e
+    return [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+
+
+def expand_lab_users(d: dict, base_dir: str) -> dict:
+    """Resolves [lab].users_file (relative to the config file) into [lab].users, normalised.
+    The result is self-contained: it is what gets uploaded to the VM."""
+    lab = d.get("lab")
+    if not lab:
+        return d
+    users = [str(u) for u in lab.get("users", [])]
+    if lab.get("users_file"):
+        f = str(lab["users_file"])
+        users += read_users_file(f if os.path.isabs(f) else os.path.join(base_dir, f))
+    lab = {k: v for k, v in lab.items() if k != "users_file"}
+    lab["users"] = [lab_username(u) for u in users]
+    return {**d, "lab": lab}
 
 
 def load_config(path: str) -> Config:
@@ -242,6 +283,7 @@ def load_config(path: str) -> Config:
         d = tomllib.loads(raw)
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"{path}: {e}") from e
+    d = expand_lab_users(d, os.path.dirname(os.path.abspath(path)))
     gpus: dict[int, list[str] | None] = {}
     for k, v in d.get("gpus", {}).items():
         if not str(k).isdigit():
@@ -266,10 +308,39 @@ def load_config(path: str) -> Config:
                 users=[str(u) for u in c.get("users", [])],
             )
         )
+    lab = None
+    if d.get("lab"):
+        lb = d["lab"]
+        if not lb.get("profile"):
+            raise ConfigError("[lab]: 'profile' is required (e.g. \"1g.5gb\")")
+        prof = str(lb["profile"]).lower()
+        lab_gpus = [int(g) for g in lb.get("gpus", [])] or sorted(
+            i for i, lay in gpus.items() if lay is not None and prof in lay
+        )
+        lab = Lab(profile=prof, gpus=lab_gpus)
+        ldf = {**df, **{k: v for k, v in lb.items() if k in DEFAULTS}}
+        prefix = str(lb.get("prefix", "lab-"))
+        for u in lb.get("users", []):
+            where = f"[lab] user '{u}'"
+            cts.append(
+                CtSpec(
+                    name=lab_container(prefix, u),
+                    gpu=None,
+                    profile=prof,
+                    cpu=int(ldf["cpu"]),
+                    memory=parse_size(ldf["memory"], f"{where}.memory"),
+                    disk=parse_size(ldf["disk"], f"{where}.disk"),
+                    image=str(ldf["image"]),
+                    software=list(ldf["software"]),
+                    users=[u],
+                    lab=True,
+                )
+            )
     reserve = d.get("memory_reserve")
     return Config(
         gpus=gpus,
         containers=cts,
+        lab=lab,
         storage_device=str(d.get("storage_device", "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1")),
         ssh_port_base=int(d.get("ssh_port_base", 2201)),
         memory_reserve=parse_size(reserve, "memory_reserve") if reserve else None,
@@ -461,6 +532,42 @@ def read_resources(cfg: Config | None) -> dict:
 # ─── Validation and resource checks ──────────────────────────────────────────
 
 
+def resolve_lab(cfg: Config, cts: list[CtState]) -> None:
+    """Gives each [lab] container a GPU with a free slice of the lab profile.
+
+    Existing containers keep their GPU, so adding or removing people does not move
+    the others; new ones fill the GPUs in order (GPU 0 first)."""
+    lab_specs = [c for c in cfg.containers if c.lab and c.gpu is None]
+    if not lab_specs or cfg.lab is None:
+        return
+    prof = cfg.lab.profile
+    free = {g: (cfg.gpus.get(g) or []).count(prof) for g in cfg.lab.gpus}
+    for c in cfg.containers:
+        if not c.lab and c.profile == prof and c.gpu in free:
+            free[c.gpu] -= 1
+    current = {c.name: c for c in cts if c.managed}
+    pending = []
+    for spec in lab_specs:
+        cur = current.get(spec.name)
+        if cur and cur.profile == prof and cur.gpu in free and free[cur.gpu] > 0:
+            spec.gpu = cur.gpu
+            free[cur.gpu] -= 1
+        else:
+            pending.append(spec)
+    for spec in pending:
+        g = next((g for g in cfg.lab.gpus if free[g] > 0), None)
+        if g is None:
+            total = sum((cfg.gpus.get(g) or []).count(prof) for g in cfg.lab.gpus)
+            raise ConfigError(
+                f"[lab]: {len(lab_specs)} people but only {total} '{prof}' slices on GPUs "
+                f"{cfg.lab.gpus or '(none)'} (minus the [[containers]] using them); "
+                f"no slice for: {', '.join(s.name for s in pending[pending.index(spec):])}"
+            )
+        spec.gpu = g
+        free[g] -= 1
+
+
+
 def validate(cfg: Config, gpus: list[Gpu], cts: list[CtState]) -> list[str]:
     errors = []
     by_index = {g.index: g for g in gpus}
@@ -505,7 +612,7 @@ def validate(cfg: Config, gpus: list[Gpu], cts: list[CtState]) -> list[str]:
             errors.append(f"Container '{c.name}': repeated user")
         for u in c.users:
             if not USER_RE.match(u) or u in ("root", "ubuntu"):
-                errors.append(f"Container '{c.name}': invalid user name '{u}'")
+                errors.append(f"Container '{c.name}': invalid user name '{u}' (a-z, 0-9, '_', '-', max 31)")
         if c.cpu < 1:
             errors.append(f"Container '{c.name}': cpu must be >= 1")
         for s in c.software:
@@ -615,14 +722,26 @@ class Plan:
         )
 
 
+MODESET_CONF = "/etc/modprobe.d/nvidia-graphics-drivers-kms.conf"
+OLD_MODESET_CONF = "/etc/modprobe.d/mig-lxd-nvidia.conf"  # earlier name, overridden by /lib
+MODESET_TEXT = "# mig-lxd: compute-only VM, no KMS (it keeps the GPUs open). Replaces the /lib/modprobe.d file.\noptions nvidia-drm modeset=0\n"
+
+
+def modeset_missing() -> bool:
+    try:
+        return open(MODESET_CONF, encoding="utf-8").read() != MODESET_TEXT
+    except OSError:
+        return True
+
+
 def setup_status(cfg: Config) -> list[str]:
     need = []
     if not lxd_installed():
         need.append("install LXD (snap 5.21/stable)")
     if not os.path.exists(UNIT_PATH):
         need.append("install mig-lxd-boot.service (restores MIG and containers at boot)")
-    if not os.path.exists("/etc/modprobe.d/mig-lxd-nvidia.conf"):
-        need.append("disable nvidia-drm modeset (compute-only VM)")
+    if modeset_missing():
+        need.append(f"disable nvidia-drm modeset (compute-only VM): {MODESET_CONF}")
     if not os.path.exists("/etc/systemd/system/nvidia-persistenced.service.d/mig-lxd.conf"):
         need.append("enable NVIDIA persistence mode (keeps the passthrough GPUs initialised)")
     if not os.path.exists("/etc/apt/apt.conf.d/51mig-lxd-hold"):
@@ -811,12 +930,16 @@ def setup_base(cfg: Config, config_path: str) -> None:
             "// mig-lxd: no automatic kernel / NVIDIA upgrades (managed by hand)\n"
             'Unattended-Upgrade::Package-Blacklist { "linux-"; "nvidia-"; "libnvidia-"; };\n'
         )
-    # nvidia-drm modeset keeps the GPUs open: not needed in a compute-only VM
-    conf = "/etc/modprobe.d/mig-lxd-nvidia.conf"
-    if not os.path.exists(conf):
-        with open(conf, "w") as f:
-            f.write("# mig-lxd: compute-only VM, no KMS (it keeps the GPUs open)\noptions nvidia-drm modeset=0\n")
+    # nvidia-drm modeset keeps the GPUs open: not needed in a compute-only VM.
+    # Same name as the driver package's file in /lib/modprobe.d, so this one replaces it
+    # (a different name would be read too, and its modeset=1 would win).
+    if modeset_missing():
+        with open(MODESET_CONF, "w") as f:
+            f.write(MODESET_TEXT)
+        if os.path.exists(OLD_MODESET_CONF):
+            os.remove(OLD_MODESET_CONF)
         run(["update-initramfs", "-u"], check=False, timeout=600)
+        log("  nvidia-drm modeset=0 takes effect at the next VM restart")
     # Persistence mode: without it the driver tears the GPUs down when the last process
     # exits, and re-initialising a passthrough GPU can fail ("WPR2 already up").
     dropin = "/etc/systemd/system/nvidia-persistenced.service.d/mig-lxd.conf"
@@ -1246,9 +1369,11 @@ def boot() -> int:
     except RebootRequired as e:
         log(f"{e}: containers on those GPUs will not get their slice until the next restart")
     gpus = read_gpus()
+    cts = read_containers()
+    resolve_lab(cfg, cts)
     specs = {c.name: c for c in cfg.containers}
     rc = 0
-    for c in read_containers():
+    for c in cts:
         if not c.managed:
             continue
         spec = specs.get(c.name)
@@ -1267,6 +1392,53 @@ def boot() -> int:
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────
+
+
+def _toml_value(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, str):
+        return json.dumps(v, ensure_ascii=False)
+    if isinstance(v, list):
+        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
+    raise ConfigError(f"cannot write {type(v).__name__} values: {v!r}")
+
+
+def dump_toml(d: dict) -> str:
+    """Minimal TOML writer for the config subset: scalars, lists, tables, arrays of tables."""
+    def key(k) -> str:
+        return str(k) if re.match(r"^[A-Za-z0-9_-]+$", str(k)) else json.dumps(str(k))
+
+    lines: list[str] = []
+    for k, v in d.items():
+        if not isinstance(v, dict) and not (isinstance(v, list) and v and all(isinstance(x, dict) for x in v)):
+            lines.append(f"{key(k)} = {_toml_value(v)}")
+    for k, v in d.items():
+        if isinstance(v, dict):
+            lines += ["", f"[{key(k)}]"] + [f"{key(kk)} = {_toml_value(vv)}" for kk, vv in v.items()]
+        elif isinstance(v, list) and v and all(isinstance(x, dict) for x in v):
+            for item in v:
+                lines += ["", f"[[{key(k)}]]"] + [f"{key(kk)} = {_toml_value(vv)}" for kk, vv in item.items()]
+    return "\n".join(lines) + "\n"
+
+
+def cmd_expand(path: str) -> int:
+    """Prints CONFIG with [lab].users_file read in: the self-contained file sent to the VM."""
+    raw = open(path, encoding="utf-8").read()
+    try:
+        d = tomllib.loads(raw)
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError(f"{path}: {e}") from e
+    if not (d.get("lab") or {}).get("users_file"):
+        sys.stdout.write(raw)
+        return 0
+    d = expand_lab_users(d, os.path.dirname(os.path.abspath(path)))
+    sys.stdout.write(f"# Generated from {os.path.basename(path)} by mig_lxd.py expand ([lab].users_file read in)\n")
+    sys.stdout.write(dump_toml(d))
+    return 0
+
 
 
 def cmd_state(_args) -> int:
@@ -1299,6 +1471,7 @@ def cmd_state(_args) -> int:
 
 def check(cfg: Config, prune: bool) -> tuple[list[Gpu], list[CtState], Plan | None, int]:
     gpus, cts = read_gpus(), read_containers()
+    resolve_lab(cfg, cts)
     errors = validate(cfg, gpus, cts)
     if errors:
         log("Config errors:")
@@ -1326,6 +1499,7 @@ def main() -> int:
     sub.add_parser("layouts")
     sub.add_parser("status")
     sub.add_parser("boot")
+    sub.add_parser("expand").add_argument("config")
     for n in ("plan", "apply"):
         p = sub.add_parser(n)
         p.add_argument("config")
@@ -1334,6 +1508,13 @@ def main() -> int:
     p.add_argument("container")
     p.add_argument("user")
     a = ap.parse_args()
+
+    if a.cmd == "expand":
+        try:
+            return cmd_expand(a.config)
+        except ConfigError as e:
+            log(f"Config error: {e}")
+            return 3
 
     if a.cmd == "layouts":
         print_table([["Layout", "Instances", "Gives", "Idle compute"]] + [
