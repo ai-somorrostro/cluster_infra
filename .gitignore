@@ -15,6 +15,9 @@ telecomunicaciones/mikrotik_management/wireward_generator/comandos/
 telecomunicaciones/mikrotik_management/wireward_generator/generar_vpn.sh
 configs.7z
 mcp/proxmox/config.json
+config/mig/*.toml
+!config/mig/example.toml
+config/mig/*.credentials
 mcp/**/*.log
 mcp/**/*.sqlite3*
 
@@ -28,6 +31,8 @@ mcp/**/*.sqlite3*
 .history/
 
 # ── Junk ──
+__pycache__/
+*.pyc
 *~
 *.swp
 .directory
