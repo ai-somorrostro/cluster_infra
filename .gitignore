@@ -18,6 +18,8 @@ mcp/proxmox/config.json
 config/mig/*.toml
 !config/mig/example.toml
 config/mig/*.credentials
+config/people/*
+!config/people/example.txt
 mcp/**/*.log
 mcp/**/*.sqlite3*
 

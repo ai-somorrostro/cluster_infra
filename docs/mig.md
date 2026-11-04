@@ -57,6 +57,8 @@ See [`config/mig/example.toml`](../config/mig/example.toml). Real files (`config
 | `[defaults]` | `cpu`, `memory`, `disk`, `image`, `software` for every container |
 | `[[containers]]` | `name`, `gpu`, `profile` (MIG GPUs only), `users`, and any default to override |
 
+User lists per course live in `config/people/<course>.txt` (one username per line, gitignored; see `config/people/example.txt`).
+
 `software`: `python` (python3, pip, venv, build tools), `uv`, `apt:PKG`, `pip:PKG`. Sizes: `GB` means GiB.
 
 ## Checks before changing anything
