@@ -114,7 +114,7 @@ The first time:
 - **LXD** (snap 5.21 LTS), a **btrfs** pool `miglxd` on `storage_device`, the `lxdbr0` NAT bridge and the `miglxd` profile (NVIDIA runtime with compute/utility only, hard memory limit, no swap, no autostart).
 - **`mig-lxd-boot.service`**: MIG instances are lost on every reboot; at boot it recreates the layouts from `/etc/mig-lxd/config.toml`, rebinds each container to its slice and starts it. Each container keeps its slice across reboots (same GPU and placement).
 - **NVIDIA persistence mode** (`nvidia-persistenced --persistence-mode`): without it the driver tears a GPU down when the last process exits, and re-initialising a passthrough GPU can fail (`WPR2 already up`: the GPU disappears from `nvidia-smi` until the VM restarts).
-- **No KMS** (`nvidia-drm modeset=0`, in `/etc/modprobe.d/nvidia-graphics-drivers-kms.conf`: the same name as the driver package's file in `/lib/modprobe.d`, which it replaces; with another name the packaged `modeset=1` would still win). Takes effect at the next VM restart.
+- **No KMS** (`nvidia-drm modeset=0`, in `/etc/modprobe.d/nvidia-kms.conf` and any other name that a file in `/lib` or `/usr/lib/modprobe.d` uses to set `modeset=1` (`ubuntu-drivers` writes `nvidia-kms.conf`); only a file with the same name replaces it, a different name would be read too and `modeset=1` would win). Takes effect at the next VM restart.
 - **Package hold** on the kernel and the NVIDIA driver (`apt-mark hold` + unattended-upgrades blacklist). An automatic kernel upgrade without its NVIDIA module leaves the VM without GPUs (it happened to VM 106). Upgrade them by hand, together, and reboot.
 - **Docker coexistence:** Docker sets the `FORWARD` policy to `DROP`; rules in `DOCKER-USER` let the LXD bridge through.
 

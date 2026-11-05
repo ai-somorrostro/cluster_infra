@@ -722,16 +722,41 @@ class Plan:
         )
 
 
-MODESET_CONF = "/etc/modprobe.d/nvidia-graphics-drivers-kms.conf"
-OLD_MODESET_CONF = "/etc/modprobe.d/mig-lxd-nvidia.conf"  # earlier name, overridden by /lib
-MODESET_TEXT = "# mig-lxd: compute-only VM, no KMS (it keeps the GPUs open). Replaces the /lib/modprobe.d file.\noptions nvidia-drm modeset=0\n"
+MODESET_TEXT = "# mig-lxd: compute-only VM, no KMS (it keeps the GPUs open). Replaces the file of the same name in /usr/lib/modprobe.d.\noptions nvidia-drm modeset=0\n"
+MODESET_DEFAULT = "nvidia-kms.conf"  # name used by ubuntu-drivers in /usr/lib/modprobe.d
+OLD_MODESET_CONFS = ("/etc/modprobe.d/mig-lxd-nvidia.conf", "/etc/modprobe.d/nvidia-graphics-drivers-kms.conf")
 
 
-def modeset_missing() -> bool:
-    try:
-        return open(MODESET_CONF, encoding="utf-8").read() != MODESET_TEXT
-    except OSError:
-        return True
+def modeset_targets() -> list[str]:
+    """/etc/modprobe.d files that shadow every packaged file setting nvidia-drm modeset=1.
+    modprobe reads all files and the last option wins, so only a file with the SAME name
+    in /etc replaces one in /lib or /usr/lib."""
+    names = {MODESET_DEFAULT}
+    for d in ("/lib/modprobe.d", "/usr/lib/modprobe.d"):
+        try:
+            entries = os.listdir(d)
+        except OSError:
+            continue
+        for n in entries:
+            try:
+                text = open(os.path.join(d, n), encoding="utf-8", errors="replace").read()
+            except OSError:
+                continue
+            if re.search(r"^\s*options\s+nvidia[-_]drm\s+.*modeset=1", text, re.M):
+                names.add(n)
+    return sorted(f"/etc/modprobe.d/{n}" for n in names)
+
+
+def modeset_missing() -> list[str]:
+    missing = []
+    for t in modeset_targets():
+        try:
+            if open(t, encoding="utf-8").read() == MODESET_TEXT:
+                continue
+        except OSError:
+            pass
+        missing.append(t)
+    return missing
 
 
 def setup_status(cfg: Config) -> list[str]:
@@ -740,8 +765,9 @@ def setup_status(cfg: Config) -> list[str]:
         need.append("install LXD (snap 5.21/stable)")
     if not os.path.exists(UNIT_PATH):
         need.append("install mig-lxd-boot.service (restores MIG and containers at boot)")
-    if modeset_missing():
-        need.append(f"disable nvidia-drm modeset (compute-only VM): {MODESET_CONF}")
+    ms = modeset_missing()
+    if ms:
+        need.append(f"disable nvidia-drm modeset (compute-only VM): {', '.join(ms)}")
     if not os.path.exists("/etc/systemd/system/nvidia-persistenced.service.d/mig-lxd.conf"):
         need.append("enable NVIDIA persistence mode (keeps the passthrough GPUs initialised)")
     if not os.path.exists("/etc/apt/apt.conf.d/51mig-lxd-hold"):
@@ -933,13 +959,16 @@ def setup_base(cfg: Config, config_path: str) -> None:
     # nvidia-drm modeset keeps the GPUs open: not needed in a compute-only VM.
     # Same name as the driver package's file in /lib/modprobe.d, so this one replaces it
     # (a different name would be read too, and its modeset=1 would win).
-    if modeset_missing():
-        with open(MODESET_CONF, "w") as f:
-            f.write(MODESET_TEXT)
-        if os.path.exists(OLD_MODESET_CONF):
-            os.remove(OLD_MODESET_CONF)
+    missing = modeset_missing()
+    if missing:
+        for t in missing:
+            with open(t, "w") as f:
+                f.write(MODESET_TEXT)
+        for old in OLD_MODESET_CONFS:
+            if old not in missing and os.path.exists(old) and open(old, encoding="utf-8").read().startswith("# mig-lxd"):
+                os.remove(old)
         run(["update-initramfs", "-u"], check=False, timeout=600)
-        log("  nvidia-drm modeset=0 takes effect at the next VM restart")
+        log(f"  nvidia-drm modeset=0 ({', '.join(missing)}) takes effect at the next VM restart")
     # Persistence mode: without it the driver tears the GPUs down when the last process
     # exits, and re-initialising a passthrough GPU can fail ("WPR2 already up").
     dropin = "/etc/systemd/system/nvidia-persistenced.service.d/mig-lxd.conf"
