@@ -77,7 +77,7 @@ users_file = "../people/iabd-2026.txt"   # relative to the TOML
 |---|---|
 | `profile` | MIG profile of every lab container (required) |
 | `gpus` | GPUs to use (default: every MIG GPU whose layout has `profile`) |
-| `prefix` | Container name = prefix + user, `_` → `-` (default `lab-`: `lab-ane-perez`) |
+| `prefix` | Container name = prefix + user, `_` → `-` (default `lab-`: `mikel.diez` → user `mikel_diez`, container `lab-mikel-diez`) |
 | `users`, `users_file` | People: inline and/or a file with one per line (`#` comments). `nombre.apellido` becomes the Linux user `nombre_apellido` |
 | `cpu`, `memory`, `disk`, `image`, `software` | Override `[defaults]` for the lab |
 
@@ -86,6 +86,8 @@ User lists per course live in `config/people/<course>.txt` (gitignored; see `con
 GPUs are filled in order (GPU 0 first), after the slices taken by `[[containers]]`. A container that already exists keeps its GPU, so adding or removing people does not move anybody else. If there are more people than free slices, `plan` says who is left without one. The wizard (`configure`) does not edit `[lab]` yet.
 
 `software`: `python` (python3, pip, venv, build tools), `uv`, `apt:PKG`, `pip:PKG`. Sizes: `GB` means GiB.
+
+How the people then work in their container (VS Code Remote - SSH, first login, limits of a slice): [lab-vscode.md](lab-vscode.md).
 
 ## Checks before changing anything
 
