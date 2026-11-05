@@ -18,6 +18,10 @@ mcp/proxmox/config.json
 config/mig/*.toml
 !config/mig/example.toml
 config/mig/*.credentials
+config/bench/*.toml
+!config/bench/example.toml
+!config/bench/gpu-stress.toml
+config/bench/results/
 config/people/*
 !config/people/example.txt
 mcp/**/*.log
