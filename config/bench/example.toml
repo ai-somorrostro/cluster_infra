@@ -1,0 +1,51 @@
+# Benchmark for vm/vm_mig_bench.sh: runs a workload in many MIG + LXD containers at once.
+# Copy to config/bench/<name>.toml (real files are gitignored) and adjust.
+#
+#   vm/vm_mig_bench.sh prepare config/bench/<name>.toml          # once: checkout, setup, warm-up
+#   vm/vm_mig_bench.sh run config/bench/<name>.toml -s gpu --containers lab-profe   # baseline
+#   vm/vm_mig_bench.sh run config/bench/<name>.toml -s gpu      # all containers at once
+#   vm/vm_mig_bench.sh clean config/bench/<name>.toml
+#
+# Placeholders: {shared} = /opt/mig-bench/<name> (read-only in the containers), {src} = {shared}/src,
+# {work} = the per-run copy (/root/mig-bench/<name>/work in each container), {item}, {item_name}.
+
+vm = 106
+name = "notebooks"                       # lowercase, digits and '-'
+
+[source]
+git = "https://github.com/example/course.git"   # cloned by the VM (public repo or a URL with read access)
+ref = "main"                                    # commit, tag or branch; a commit makes runs comparable
+
+# Local files that are not in git, uploaded into the tree (for example a prepared LLM cache).
+# Never .env files: secrets stay on this machine.
+[source.files]
+# "cache/llm.sqlite" = "~/course/cache/llm.sqlite"
+
+[setup]                                  # runs once in the VM, in {src}, as root
+commands = [
+  "uv sync --frozen --no-install-project --python /usr/bin/python3.12",
+]
+warmup = true                            # run the items once on a free MIG slice (downloads the models)
+
+[env]                                    # for the warm-up and the runs
+HF_HOME = "{shared}/hf"
+
+[run]
+items = ["01_intro.ipynb", "02_train.ipynb"]
+command = "{src}/.venv/bin/jupyter nbconvert --to notebook --execute --allow-errors --ExecutePreprocessor.timeout=3600 --output-dir {work}/out {item}"
+output = "{work}/out/{item_name}"        # executed notebook: errors and slowest cell are read from it
+timeout = 3600                           # per item, seconds
+offline_env = { HF_HUB_OFFLINE = "1", TRANSFORMERS_OFFLINE = "1" }
+container_setup = []                     # extra shell commands per container before the run (as root)
+
+[errors]                                 # class = regex on "Exception: message", first match wins
+oom_gpu = "OutOfMemoryError|CUDA out of memory"
+oom_ram = "MemoryError|DeadKernelError|Kernel died"
+
+[scenarios.gpu]
+from = "source"                          # git tree + [source.files]: everything is computed again
+description = "Everything computed in each container"
+
+[scenarios.cached]
+from = "warmup"                          # the tree after the warm-up, with every cache it wrote
+description = "With the caches of the warm-up run"

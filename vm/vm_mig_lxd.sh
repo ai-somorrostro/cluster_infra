@@ -90,6 +90,15 @@ open_vm() {
   if [[ -n "$balloon" && "$balloon" != 0 && "$balloon" -lt "${memory:-0}" ]]; then
     log_warn "Proxmox ballooning is on (min ${balloon} MiB < ${memory} MiB): the VM can get less RAM than the checks assume"
   fi
+  local machine
+  machine="$(json_get 'd.get("machine","")' <<<"$cfgj")"
+  if [[ "$machine" == *viommu=* ]]; then
+    # Seen on VM 106 (2026-11-05): with a vIOMMU every guest DMA page becomes a VFIO mapping on the host;
+    # with several CUDA processes per GPU they run out (vfio_container_dma_map = -28) and the GPUs compute
+    # garbage: zeros, Xid 13 "Illegal Instruction Encoding", then nvidia_uvm hangs.
+    log_warn "machine '$machine' has a vIOMMU: several CUDA processes per GPU will corrupt results." \
+      "Remove it (qm set $VMID --machine q35) and stop/start the VM. See docs/mig.md (Troubleshooting)"
+  fi
   # The engine is staged on every run (also with -n: it only reads in plan/status)
   local d="$DRY_RUN"
   DRY_RUN=0
