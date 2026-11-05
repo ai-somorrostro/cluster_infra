@@ -47,6 +47,7 @@ Requirements:
 | Build the Ubuntu 24.04 VM template | `templates/VMs/ubuntu-server-24-http/` ([docs/templates.md](docs/templates.md)) |
 | Build the Ubuntu LXC template | `templates/containers/ubuntu-lxc/` ([docs/templates.md](docs/templates.md)) |
 | Split A800 GPUs (MIG) into LXD containers with users | `vm/vm_mig_lxd.sh configure config/mig/gpu2.toml 106` ([docs/mig.md](docs/mig.md)) |
+| Load test: the same notebooks in every MIG container at once | `vm/vm_mig_bench.sh run config/bench/<name>.toml -s gpu` ([docs/mig.md](docs/mig.md#load-test-vmvm_mig_benchsh)) |
 | Manage the cluster from Claude Code (MCP) | `mcp/proxmox/` ([README](mcp/proxmox/README.md)) |
 
 ## Layout
@@ -54,7 +55,7 @@ Requirements:
 ```
 .env.example   Proxmox API credentials (copy to .env)
 config/        clusters.conf(.example): optional multi-cluster / fallback nodes
-               mig/: MIG + LXD profiles · people/: user lists per course (gitignored)
+               mig/: MIG + LXD profiles · bench/: load tests · people/: user lists per course (gitignored)
 lib/           pve_common.sh: shared library of the vm/ and host/ scripts
                proxmox-api.sh, pve-load-env.sh: API helpers and .env loader (also used by templates/)
 vm/            run on a node or on your machine and act on VMs

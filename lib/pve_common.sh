@@ -702,6 +702,7 @@ guest_write_file() {
 
 # guest_upload VMID LOCAL_FILE REMOTE_PATH [MODE]
 #   Files over ~40 KB go gzip + base64 and are decoded inside the VM (agent/file-write limit).
+#   Bigger ones are sent in pieces of ~45 KB (one API call each: fine up to a few MB).
 guest_upload() {
   local vmid="$1" src="$2" dest="$3" mode="${4:-}"
   [[ -f "$src" ]] || {
@@ -712,7 +713,14 @@ guest_upload() {
     guest_write_file "$vmid" "$dest" "$(cat "$src")"$'\n' "$mode"
     return
   fi
-  guest_write_file "$vmid" "$dest.gz.b64" "$(gzip -9c "$src" | base64 -w76)"$'\n' || return 1
+  local b64 off chunk=45000
+  b64="$(gzip -9c "$src" | base64 -w0)"
+  guest_exec "$vmid" rm -f "$dest.gz.b64" || return 1
+  for ((off = 0; off < ${#b64}; off += chunk)); do
+    guest_write_file "$vmid" "$dest.gz.b64.part" "${b64:off:chunk}" || return 1
+    # shellcheck disable=SC2016  # expanded inside the VM
+    guest_exec "$vmid" sh -c 'cat "$1.part" >> "$1" && rm -f "$1.part"' sh "$dest.gz.b64" || return 1
+  done
   # shellcheck disable=SC2016  # expanded inside the VM
   guest_exec "$vmid" sh -c 'base64 -d "$1.gz.b64" | gunzip > "$1" && rm -f "$1.gz.b64"' sh "$dest" || return 1
   [[ -z "$mode" ]] || guest_exec "$vmid" chmod "$mode" "$dest"

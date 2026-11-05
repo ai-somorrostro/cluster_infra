@@ -20,7 +20,7 @@ syntax:
 	@python3 -c 'import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' $(PYTHON) && echo "python syntax OK ($(words $(PYTHON)) files)"
 
 secrets:
-	@bad=$$(git ls-files | grep -E '(^|/)(\.env|users\.txt|groups\.txt|usuarios\.txt|clusters\.conf|[^/]*\.pkrvars\.hcl|user-data)$$|wireward_generator/configs/|^mcp/.*/config\.json$$|^config/mig/.*\.credentials$$|^config/mig/(.*/)?[^/]*\.toml$$|^config/people/' | grep -vE '^config/(mig/example\.toml|people/example\.txt)$$' || true); \
+	@bad=$$(git ls-files | grep -E '(^|/)(\.env|users\.txt|groups\.txt|usuarios\.txt|clusters\.conf|[^/]*\.pkrvars\.hcl|user-data)$$|wireward_generator/configs/|^mcp/.*/config\.json$$|^config/mig/.*\.credentials$$|^config/mig/(.*/)?[^/]*\.toml$$|^config/bench/(.*/)?[^/]*\.(toml|json)$$|^config/people/' | grep -vE '^config/(mig/example\.toml|bench/(example|gpu-stress)\.toml|people/example\.txt)$$' || true); \
 	if [ -n "$$bad" ]; then echo "Sensitive files tracked by git:"; echo "$$bad"; exit 1; else echo "secrets OK"; fi
 
 check: syntax lint secrets

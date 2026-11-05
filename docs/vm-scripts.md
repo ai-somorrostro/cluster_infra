@@ -163,6 +163,26 @@ MIG + LXD configurator: carves the A800 GPUs of a VM with MIG and gives each LXD
 
 ---
 
+## vm/vm_mig_bench.sh 🔌
+
+Load test for a VM set up with `vm_mig_lxd.sh`. The same workload runs in many MIG containers at once while the VM samples:
+
+- VRAM per slice and RAM per container;
+- GPU temperature, power and clocks;
+- the VM's CPU and RAM.
+
+Config: `config/bench/<name>.toml`. Guide: [mig.md](mig.md#load-test-vmvm_mig_benchsh).
+
+| Command | |
+|---|---|
+| `check CONFIG` | Validate (local) |
+| `prepare CONFIG` | Upload extra files, clone, setup, warm-up on a free slice |
+| `run CONFIG -s SCENARIO [--containers A,B\|all] [--gpu N] [--count N]` | Run everywhere at once, then report |
+| `report RESULT.json...` | Print or compare results (1-container run = baseline) |
+| `clean CONFIG` | Remove mounts, work dirs and the shared dir |
+
+---
+
 ## host/pve_gpu_passthrough.sh
 
 Prepares a **node** for NVIDIA GPU passthrough:

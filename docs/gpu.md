@@ -7,9 +7,17 @@ NVIDIA compute GPUs (RTX A6000 48 GB, A800 40 GB) passed through to VMs with **P
 | Step | Where | Script |
 |---|---|---|
 | 1. Prepare the node (once per node) | Node | `host/pve_gpu_passthrough.sh --model a6000\|a800 --node <node>`, then reboot the node |
-| 2. Assign the GPU to the VM | Proxmox UI | VM → Hardware → Add → PCI Device (*All Functions* if the GPU has audio, like the A6000) |
+| 2. Assign the GPU to the VM | Proxmox UI | VM → Hardware → Add → PCI Device (*All Functions* if the GPU has audio, like the A6000). Machine `q35` **without vIOMMU** (see below) |
 | 3. Drivers in the VM | Inside the VM | `sudo guest/install_nvidia_drivers.sh`, then reboot the VM |
 | 4. Limit VRAM (optional, shared VMs) | Node or your machine | `vm/vm_install_vram_killer.sh --limit <MiB> <vmid>` |
+
+> [!WARNING]
+> **No vIOMMU in GPU VMs** (`machine: q35`, not `q35,viommu=intel|virtio`). With a vIOMMU every DMA page the
+> guest driver maps becomes a VFIO mapping on the node, and several CUDA processes per GPU exhaust them
+> (`vfio_container_dma_map(...) = -28 (No space left on device)` in the node syslog). The GPUs then compute
+> garbage without any CUDA error (tensors full of zeros), or fail with `Xid 13 Illegal Instruction Encoding`,
+> and finally `nvidia_uvm` hangs. One process per GPU works, so it only shows up under load. Found on VM 106
+> with MIG on 2026-11-05; fix: `qm set <vmid> --machine q35`, then stop/start the VM.
 
 ## 1. Node: `host/pve_gpu_passthrough.sh`
 
