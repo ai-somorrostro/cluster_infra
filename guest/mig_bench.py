@@ -339,6 +339,17 @@ def read_int(p: Path) -> int | None:
         return None
 
 
+def mem_stat(name: str, key: str) -> int | None:
+    try:
+        for line in (cgroup(name) / "memory.stat").read_text().splitlines():
+            k, v = line.split()
+            if k == key:
+                return int(v)
+    except (OSError, ValueError):
+        pass
+    return None
+
+
 def oom_kills(name: str) -> int:
     try:
         for line in (cgroup(name) / "memory.events").read_text().splitlines():
@@ -365,7 +376,8 @@ class Sampler(threading.Thread):
         self.gpu: dict[int, dict] = {}
         self.mig_peak: dict[str, int] = {}  # "gpu:idx" -> MiB
         self.mig_total: dict[str, int] = {}
-        self.ct_peak: dict[str, int] = {c: 0 for c in cts}
+        self.ct_peak: dict[str, int] = {c: 0 for c in cts}  # memory.current: includes page cache
+        self.ct_anon: dict[str, int] = {c: 0 for c in cts}  # anon memory: what the processes really use
         self.cpu_prev = self._cpu()
         self.errors = 0
 
@@ -417,13 +429,18 @@ class Sampler(threading.Thread):
             pass
         except Exception:
             self.errors += 1
-        mem_sum = 0
+        mem_sum = anon_sum = 0
         for c in self.cts:
             v = read_int(cgroup(c) / "memory.current")
             if v is not None:
                 self.ct_peak[c] = max(self.ct_peak[c], v)
                 mem_sum += v
+            a = mem_stat(c, "anon")
+            if a is not None:
+                self.ct_anon[c] = max(self.ct_anon[c], a)
+                anon_sum += a
         s["ct_mem"] = mem_sum
+        s["ct_anon"] = anon_sum
         tot, idle = self._cpu()
         dt, di = tot - self.cpu_prev[0], idle - self.cpu_prev[1]
         self.cpu_prev = (tot, idle)
@@ -750,6 +767,7 @@ def cmd_run(b: Bench, args) -> int:
             "vram_peak_mib": sampler.mig_peak.get(key) if key else None,
             "vram_total_mib": sampler.mig_total.get(key) if key else None,
             "ram_peak": sampler.ct_peak.get(n),
+            "ram_anon_peak": sampler.ct_anon.get(n),
             "ram_limit": c["memory_limit"],
             "oom_kills": oom_kills(n) - oom0[n],
         }
@@ -854,6 +872,7 @@ def report(results: list[dict]) -> None:
             continue
         vram = [(c["vram_peak_mib"], c["vram_total_mib"], n) for n, c in cts.items() if c.get("vram_peak_mib") is not None]
         ram = [(c["ram_peak"], n, c.get("ram_limit")) for n, c in cts.items() if c.get("ram_peak")]
+        anon = [(c["ram_anon_peak"], n) for n, c in cts.items() if c.get("ram_anon_peak")]
         ooms = sum(c.get("oom_kills", 0) for c in cts.values())
         if vram:
             mx = max(vram)
@@ -861,7 +880,11 @@ def report(results: list[dict]) -> None:
                 f"max {mx[0] / 1024:.2f} of {mx[1] / 1024:.2f} GiB ({mx[2]})")
         if ram:
             mx = max(ram)
-            log(f"   RAM peak per container: median {fmt_gib(statistics.median(v[0] for v in ram))} GiB, "
+            if anon:
+                ma = max(anon)
+                log(f"   RAM used by the processes (anon) per container: median "
+                    f"{fmt_gib(statistics.median(v[0] for v in anon))} GiB, max {fmt_gib(ma[0])} GiB ({ma[1]})")
+            log(f"   RAM incl. page cache (memory.current): median {fmt_gib(statistics.median(v[0] for v in ram))} GiB, "
                 f"max {fmt_gib(mx[0])} GiB of {mx[2]} ({mx[1]}); OOM kills: {ooms}")
         for i, g in r["gpus"].items():
             log(f"   GPU {i}: temp max {g['temp_max']:.0f} C, power avg/max {g['power_avg'] or 0:.0f}/{g['power_max']:.0f} W, "
