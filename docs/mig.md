@@ -133,10 +133,45 @@ State lives in the containers themselves (`user.miglxd.*` keys: GPU, profile, sl
 | Remove a container from the file | Kept (warning) unless `apply --prune`: then its `/home` is archived to `/var/lib/mig-lxd/archive/` and it is deleted |
 | Remove a user from the file | Not deleted (warning) |
 
+## Load test: `vm/vm_mig_bench.sh`
+
+Runs the same workload (for example the notebooks of a course) in many containers at the same moment, each on its own slice, and measures how the VM holds up. Config: `config/bench/<name>.toml` (gitignored; see `config/bench/example.toml`).
+
+```bash
+vm/vm_mig_bench.sh prepare config/bench/rag-s2.toml                          # once
+vm/vm_mig_bench.sh run config/bench/rag-s2.toml -s gpu --containers lab-profe   # baseline, 1 container
+vm/vm_mig_bench.sh run config/bench/rag-s2.toml -s gpu                       # all at once
+vm/vm_mig_bench.sh run config/bench/rag-s2.toml -s gpu --gpu 0               # the 7 slices of one GPU
+vm/vm_mig_bench.sh report config/bench/results/*rag-s2-gpu*.json             # compare with the baseline
+vm/vm_mig_bench.sh clean config/bench/rag-s2.toml
+```
+
+| Step | What it does |
+|---|---|
+| `prepare` | Uploads `[source.files]` (never `.env`), clones `[source].git` at `ref` into `/opt/mig-bench/<name>/src` and runs `[setup].commands` there (for example `uv sync --no-install-project`). The warm-up then runs every item once on a **free MIG slice** with internet access: it downloads the models into `HF_HOME` and leaves a tree with every cache in `.../warm` |
+| `run -s SCENARIO` | Mounts `/opt/mig-bench/<name>` **read-only** in the selected containers, copies the tree (`from = "source"` or `"warmup"`) to `/root/mig-bench/<name>/work` and starts the items in all of them together (offline: `[run].offline_env`) |
+| `clean` | Removes the mounts, the work dirs and `/opt/mig-bench/<name>`; the results stay in `/var/lib/mig-bench/<name>/results` |
+
+During a run the VM samples every 3 s:
+
+- VRAM per MIG slice (`nvidia-smi -q -x`);
+- temperature, power, SM clock and throttle reasons per GPU;
+- RAM per container (cgroup `memory.current`) and its OOM kills;
+- CPU, load and free RAM of the VM.
+
+The report gives, per item, how many containers finished it without errors and the min / median / max time. Next to it come the 1-container time and the slowdown, the errors grouped by `[errors]` class (for example `oom_gpu` or `cache_miss`), and the peaks of every metric. Results are copied to `config/bench/results/` (gitignored, they name the containers).
+
+Notes:
+
+- The users' `/home` is never touched; the containers' users notice the load while a run lasts.
+- Run the items with `--allow-errors` (nbconvert): a failing cell is counted instead of stopping the notebook.
+- The venv in `/opt` uses the VM's `/usr/bin/python3.12`, which is the same path in the `ubuntu:24.04` containers.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
+| Several containers on one GPU get wrong results (tensors full of zeros, no error), `CUDA error: an illegal instruction was encountered`, `Xid 13 ... Illegal Instruction Encoding` + `Xid 43` in `dmesg`, then processes stuck in `nvidia_uvm` (`blocked for more than 120 seconds`) and `nvidia-smi` hangs | The VM has a **vIOMMU** (`machine: q35,viommu=intel`). Every DMA page of the guest driver becomes a VFIO mapping on the node; with several CUDA processes per GPU they run out (`vfio_container_dma_map(...) = -28 (No space left on device)` in the node syslog) and the GPUs read garbage. Fix: `qm set <vmid> --machine q35` and stop/start the VM (stuck processes cannot be killed: `qm stop`). One process per GPU works with a vIOMMU, so it shows up only under load. `vm_mig_lxd.sh` and `vm_mig_bench.sh` warn about it |
 | `REBOOT REQUIRED: MIG mode change pending` | Expected when turning MIG on/off: accept the restart (or restart the VM from Proxmox and run `apply` again) |
 | A GPU disappears from `nvidia-smi`, `dmesg` shows `WPR2 already up` / `RmInitAdapter failed` | The GPU was reset or re-initialised from inside the VM. Restart the VM **from Proxmox**. Never use `nvidia-smi -r` in a passthrough VM |
 | `nvidia-smi` fails in the VM after updates | Kernel without NVIDIA module: see [gpu.md](gpu.md); the hold prevents it |

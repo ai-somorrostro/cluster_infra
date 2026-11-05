@@ -1,0 +1,37 @@
+# Plain CUDA load (guest/gpu_stress.py): fp16/fp32 matmuls with result checks, no course code.
+# Used to find at which concurrency the MIG slices of a VM start to fail:
+#   vm/vm_mig_bench.sh run config/bench/gpu-stress.toml -s stress --count 2       # 2 containers
+#   vm/vm_mig_bench.sh run config/bench/gpu-stress.toml -s stress --gpu 0         # the 7 of GPU 0
+vm = 106
+name = "gpu-stress"
+
+[source.files]
+"gpu_stress.py" = "../../guest/gpu_stress.py"
+
+[setup]
+commands = [
+  "uv venv --allow-existing --python /usr/bin/python3.12 .venv",
+  "uv pip install --python .venv/bin/python torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128",
+]
+warmup = false
+
+[run]
+# Three processes in a row: CUDA contexts are created and destroyed, not only used
+items = ["round1", "round2", "round3"]
+command = "{src}/.venv/bin/python {src}/gpu_stress.py --seconds 60"
+timeout = 600
+metric = "([0-9.]+) TFLOPS"
+
+[errors]
+illegal_instruction = "illegal instruction|Illegal Instruction"
+oom_gpu = "out of memory"
+wrong_result = "WRONG RESULTS"
+
+[scenarios.stress]
+from = "source"
+description = "fp16/fp32 matmuls with result checks, 3 x 60 s per container"
+
+[scenarios.eager]
+from = "source"
+description = "Same load with CUDA_MODULE_LOADING=EAGER (all kernels loaded when the context is created)"
+env = { CUDA_MODULE_LOADING = "EAGER" }
