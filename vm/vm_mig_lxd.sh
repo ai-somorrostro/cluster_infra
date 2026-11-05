@@ -98,11 +98,17 @@ open_vm() {
   DRY_RUN="$d"
 }
 
+# upload_config CONFIG — sends CONFIG to the VM with [lab].users_file read in locally,
+# so the copy in the VM is self-contained (the people list lives only on this machine)
 upload_config() {
-  local d="$DRY_RUN"
+  local d="$DRY_RUN" tmp rc=0
+  tmp="$(mktemp)"
+  python3 "$ENGINE" expand "$1" >"$tmp" || { rm -f "$tmp"; return 1; }
   DRY_RUN=0
-  guest_upload "$VMID" "$1" "$STAGE/config.toml" 0600 || { DRY_RUN="$d"; return 1; }
+  guest_upload "$VMID" "$tmp" "$STAGE/config.toml" 0600 || rc=1
   DRY_RUN="$d"
+  rm -f "$tmp"
+  return "$rc"
 }
 
 # engine_query ARGS... — runs a read-only engine command and prints its output
