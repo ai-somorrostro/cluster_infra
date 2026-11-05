@@ -75,6 +75,7 @@ docs/          documentation
 - [docs/cluster.md](docs/cluster.md): the Azeroth cluster (nodes, storage, conventions, to-do)
 - [docs/gpu.md](docs/gpu.md): GPUs (passthrough, drivers, VRAM limit)
 - [docs/mig.md](docs/mig.md): MIG slices per LXD container (configurator, checks, boot restore)
+- [docs/lab-vscode.md](docs/lab-vscode.md): working in a lab container from VS Code (for students and the teacher)
 - [docs/templates.md](docs/templates.md): VM and LXC templates
 - [docs/vpn.md](docs/vpn.md): WireGuard VPN for students (MikroTik)
 - [mcp/proxmox/README.md](mcp/proxmox/README.md): Proxmox MCP server for Claude Code (setup and troubleshooting)
