@@ -156,7 +156,7 @@ During a run the VM samples every 3 s:
 
 - VRAM per MIG slice (`nvidia-smi -q -x`);
 - temperature, power, SM clock and throttle reasons per GPU;
-- RAM per container (cgroup `memory.current`) and its OOM kills;
+- RAM per container: what its processes use (`anon` in `memory.stat`) and the total with page cache (`memory.current`, which also counts files read through the shared mount), plus OOM kills;
 - CPU, load and free RAM of the VM.
 
 The report gives, per item, how many containers finished it without errors and the min / median / max time. Next to it come the 1-container time and the slowdown, the errors grouped by `[errors]` class (for example `oom_gpu` or `cache_miss`), and the peaks of every metric. Results are copied to `config/bench/results/` (gitignored, they name the containers).
