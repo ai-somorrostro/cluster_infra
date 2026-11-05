@@ -57,7 +57,33 @@ See [`config/mig/example.toml`](../config/mig/example.toml). Real files (`config
 | `[defaults]` | `cpu`, `memory`, `disk`, `image`, `software` for every container |
 | `[[containers]]` | `name`, `gpu`, `profile` (MIG GPUs only), `users`, and any default to override |
 
-User lists per course live in `config/people/<course>.txt` (one username per line, gitignored; see `config/people/example.txt`).
+### `[lab]`: one container per person
+
+For a class, list the people instead of writing one `[[containers]]` each:
+
+```toml
+[gpus]
+0 = "7x1g.5gb"
+1 = "7x1g.5gb"
+2 = "7x1g.5gb"
+
+[lab]
+profile = "1g.5gb"                       # same slice for everybody
+users = ["profe"]                        # optional inline users (first)
+users_file = "../people/iabd-2026.txt"   # relative to the TOML
+```
+
+| Key | Meaning |
+|---|---|
+| `profile` | MIG profile of every lab container (required) |
+| `gpus` | GPUs to use (default: every MIG GPU whose layout has `profile`) |
+| `prefix` | Container name = prefix + user, `_` → `-` (default `lab-`: `lab-ane-perez`) |
+| `users`, `users_file` | People: inline and/or a file with one per line (`#` comments). `nombre.apellido` becomes the Linux user `nombre_apellido` |
+| `cpu`, `memory`, `disk`, `image`, `software` | Override `[defaults]` for the lab |
+
+User lists per course live in `config/people/<course>.txt` (gitignored; see `config/people/example.txt`). The wrapper reads `users_file` **on this machine** and sends the VM a self-contained copy, so the list never has to exist in the VM.
+
+GPUs are filled in order (GPU 0 first), after the slices taken by `[[containers]]`. A container that already exists keeps its GPU, so adding or removing people does not move anybody else. If there are more people than free slices, `plan` says who is left without one. The wizard (`configure`) does not edit `[lab]` yet.
 
 `software`: `python` (python3, pip, venv, build tools), `uv`, `apt:PKG`, `pip:PKG`. Sizes: `GB` means GiB.
 
@@ -88,7 +114,7 @@ The first time:
 - **LXD** (snap 5.21 LTS), a **btrfs** pool `miglxd` on `storage_device`, the `lxdbr0` NAT bridge and the `miglxd` profile (NVIDIA runtime with compute/utility only, hard memory limit, no swap, no autostart).
 - **`mig-lxd-boot.service`**: MIG instances are lost on every reboot; at boot it recreates the layouts from `/etc/mig-lxd/config.toml`, rebinds each container to its slice and starts it. Each container keeps its slice across reboots (same GPU and placement).
 - **NVIDIA persistence mode** (`nvidia-persistenced --persistence-mode`): without it the driver tears a GPU down when the last process exits, and re-initialising a passthrough GPU can fail (`WPR2 already up`: the GPU disappears from `nvidia-smi` until the VM restarts).
-- **No KMS** (`nvidia-drm modeset=0`): a compute-only VM does not need the display driver, which keeps the GPUs open.
+- **No KMS** (`nvidia-drm modeset=0`, in `/etc/modprobe.d/nvidia-kms.conf` and any other name that a file in `/lib` or `/usr/lib/modprobe.d` uses to set `modeset=1` (`ubuntu-drivers` writes `nvidia-kms.conf`); only a file with the same name replaces it, a different name would be read too and `modeset=1` would win). Takes effect at the next VM restart.
 - **Package hold** on the kernel and the NVIDIA driver (`apt-mark hold` + unattended-upgrades blacklist). An automatic kernel upgrade without its NVIDIA module leaves the VM without GPUs (it happened to VM 106). Upgrade them by hand, together, and reboot.
 - **Docker coexistence:** Docker sets the `FORWARD` policy to `DROP`; rules in `DOCKER-USER` let the LXD bridge through.
 
