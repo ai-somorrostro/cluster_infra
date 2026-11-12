@@ -48,6 +48,7 @@ Requirements:
 | Build the Ubuntu LXC template | `templates/containers/ubuntu-lxc/` ([docs/templates.md](docs/templates.md)) |
 | Split A800 GPUs (MIG) into LXD containers with users | `vm/vm_mig_lxd.sh configure config/mig/gpu2.toml 106` ([docs/mig.md](docs/mig.md)) |
 | Load test: the same notebooks in every MIG container at once | `vm/vm_mig_bench.sh run config/bench/<name>.toml -s gpu` ([docs/mig.md](docs/mig.md#load-test-vmvm_mig_benchsh)) |
+| Inventory of the cluster (what runs where) as a Markdown note | `vm/vm_inventory.sh --out <vault>/Inventario.md` ([docs](docs/vm-scripts.md#vmvm_inventorysh)) |
 | Manage the cluster from Claude Code (MCP) | `mcp/proxmox/` ([README](mcp/proxmox/README.md)) |
 
 ## Layout

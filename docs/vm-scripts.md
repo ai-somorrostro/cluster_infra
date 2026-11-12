@@ -183,6 +183,23 @@ Config: `config/bench/<name>.toml`. Guide: [mig.md](mig.md#load-test-vmvm_mig_be
 
 ---
 
+## vm/vm_inventory.sh
+
+Read-only Markdown inventory of the whole cluster (no VMIDs). Meant to keep a living note in the Obsidian vault up to date.
+
+- **From the API:** nodes (CPU, RAM used and allocated), storage use, every VM and LXC with vCPU, RAM, disks, GPUs (PCI passthrough, by model), IPs, tags and the **Notes** field. Templates go in a separate table.
+- **From inside running VMs** (qemu-guest-agent, skip with `--no-guest`): LXD containers (limits, MIG slice, proxy ports, `vm_mig_lxd.sh` users) and running Docker containers. LXD is only queried when the snap is installed (on Ubuntu 24.04 `/usr/sbin/lxc` would install it).
+- **Notes are the "what runs here" text.** Write it in Proxmox (*Summary > Notes*) or in the LXD instance `description`. Lines that look like credentials (`pass:`, `token=`...) are not copied.
+
+```bash
+vm/vm_inventory.sh --out "/mnt/c/Users/<you>/Documents/Vault/clusteria/Inventario.md"
+vm/vm_inventory.sh --no-guest | less       # API only, to stdout
+```
+
+With `--out` (or `INVENTORY_OUT` in `.env`) only the block between `<!-- inventory:start -->` and `<!-- inventory:end -->` is rewritten, so hand-written text around it stays. A new file gets a skeleton; an existing file without the markers is not touched. The rendered text is in Spanish because the vault is. `INVENTORY_KEEP=1` keeps the raw API answers for debugging.
+
+---
+
 ## host/pve_gpu_passthrough.sh
 
 Prepares a **node** for NVIDIA GPU passthrough:
