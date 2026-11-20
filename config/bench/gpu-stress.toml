@@ -2,6 +2,8 @@
 # Used to find at which concurrency the MIG slices of a VM start to fail:
 #   vm/vm_mig_bench.sh run config/bench/gpu-stress.toml -s stress --count 2       # 2 containers
 #   vm/vm_mig_bench.sh run config/bench/gpu-stress.toml -s stress --gpu 0         # the 7 of GPU 0
+# For a while (for example to hear the fans): scenario fan70 (70% busy) or full, 3 x 100 s
+#   vm/vm_mig_bench.sh run config/bench/gpu-stress.toml -s fan70 --containers lab-g1,lab-g2
 vm = 106
 name = "gpu-stress"
 
@@ -18,7 +20,7 @@ warmup = false
 [run]
 # Three processes in a row: CUDA contexts are created and destroyed, not only used
 items = ["round1", "round2", "round3"]
-command = "{src}/.venv/bin/python {src}/gpu_stress.py --seconds 60"
+command = "{src}/.venv/bin/python {src}/gpu_stress.py"   # 60 s each unless GPU_STRESS_SECONDS
 timeout = 600
 metric = "([0-9.]+) TFLOPS"
 
@@ -35,3 +37,13 @@ description = "fp16/fp32 matmuls with result checks, 3 x 60 s per container"
 from = "source"
 description = "Same load with CUDA_MODULE_LOADING=EAGER (all kernels loaded when the context is created)"
 env = { CUDA_MODULE_LOADING = "EAGER" }
+
+[scenarios.fan70]
+from = "source"
+description = "GPU busy 70% of the time, 3 x 100 s (about 5 min): fan noise and temperature test"
+env = { GPU_STRESS_DUTY = "0.7", GPU_STRESS_SECONDS = "100" }
+
+[scenarios.full]
+from = "source"
+description = "Full load, 3 x 100 s (about 5 min): fan noise and temperature test"
+env = { GPU_STRESS_SECONDS = "100" }
