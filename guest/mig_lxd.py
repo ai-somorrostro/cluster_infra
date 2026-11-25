@@ -225,6 +225,8 @@ class CtSpec:
     software: list[str]
     users: list[str]
     lab: bool = False  # generated from [lab]: GPU chosen by resolve_lab()
+    nogpu: bool = False  # container without GPU ('gpu' left out or "none")
+    network: str = "bridge"  # bridge: NAT on lxdbr0 + SSH port on the VM IP; lan: own LAN IP (macvlan, DHCP)
 
 
 @dataclass
@@ -242,6 +244,7 @@ class Config:
     memory_reserve: int | None
     max_cpu_overcommit: float
     raw: str = ""
+    sysctl: dict[str, str] = field(default_factory=dict)  # kernel settings of the VM (shared by all containers)
     lab: Lab | None = None
 
 
@@ -293,12 +296,20 @@ def load_config(path: str) -> Config:
     cts = []
     for i, c in enumerate(d.get("containers", [])):
         where = f"containers[{i}]"
-        if "name" not in c or "gpu" not in c:
-            raise ConfigError(f"{where}: 'name' and 'gpu' are required")
+        if "name" not in c:
+            raise ConfigError(f"{where}: 'name' is required")
+        nogpu = "gpu" not in c or str(c["gpu"]).lower() == "none"
+        if not nogpu and not str(c["gpu"]).isdigit():
+            raise ConfigError(f"{where}: 'gpu' must be a GPU index or \"none\"")
+        net = str(c.get("network", df.get("network", "bridge")))
+        if net not in ("bridge", "lan"):
+            raise ConfigError(f"{where}: network must be \"bridge\" or \"lan\"")
         cts.append(
             CtSpec(
                 name=str(c["name"]),
-                gpu=int(c["gpu"]),
+                gpu=None if nogpu else int(c["gpu"]),
+                nogpu=nogpu,
+                network=net,
                 profile=(str(c["profile"]).lower() if c.get("profile") else None),
                 cpu=int(c.get("cpu", df["cpu"])),
                 memory=parse_size(c.get("memory", df["memory"]), f"{where}.memory"),
@@ -346,6 +357,7 @@ def load_config(path: str) -> Config:
         memory_reserve=parse_size(reserve, "memory_reserve") if reserve else None,
         max_cpu_overcommit=float(d.get("max_cpu_overcommit", 2.0)),
         raw=raw,
+        sysctl={str(k): str(v) for k, v in d.get("sysctl", {}).items()},
     )
 
 
@@ -463,6 +475,7 @@ class CtState:
     users: list[str]
     software: list[str]
     provisioned: bool = True
+    network: str = "bridge"
 
 
 def read_containers() -> list[CtState]:
@@ -498,6 +511,7 @@ def read_containers() -> list[CtState]:
                 users=[u for u in cfg.get(KEY + "users", "").split(",") if u],
                 software=[s for s in cfg.get(KEY + "software", "").split(",") if s],
                 provisioned=cfg.get(KEY + "provisioned") == "true",
+                network=cfg.get(KEY + "network") or "bridge",
             )
         )
     return out
@@ -597,15 +611,19 @@ def validate(cfg: Config, gpus: list[Gpu], cts: list[CtState]) -> list[str]:
         names.add(c.name)
         if c.name in unmanaged:
             errors.append(f"Container '{c.name}': already exists in LXD and is not managed by this tool")
-        if c.gpu not in cfg.gpus:
+        if c.nogpu:
+            if c.profile:
+                errors.append(f"Container '{c.name}': 'profile' needs a 'gpu'")
+        elif c.gpu not in cfg.gpus:
             errors.append(f"Container '{c.name}': GPU {c.gpu} is not in [gpus]")
             continue
-        layout = cfg.gpus[c.gpu]
-        if layout is None and c.profile:
-            errors.append(f"Container '{c.name}': GPU {c.gpu} is 'whole', remove 'profile'")
-        if layout is not None and not c.profile:
-            errors.append(f"Container '{c.name}': GPU {c.gpu} uses MIG, set 'profile' ({', '.join(sorted(set(layout)))})")
-        use.setdefault((c.gpu, c.profile), []).append(c.name)
+        else:
+            layout = cfg.gpus[c.gpu]
+            if layout is None and c.profile:
+                errors.append(f"Container '{c.name}': GPU {c.gpu} is 'whole', remove 'profile'")
+            if layout is not None and not c.profile:
+                errors.append(f"Container '{c.name}': GPU {c.gpu} uses MIG, set 'profile' ({', '.join(sorted(set(layout)))})")
+            use.setdefault((c.gpu, c.profile), []).append(c.name)
         if not c.users:
             errors.append(f"Container '{c.name}': no users")
         if len(set(c.users)) != len(c.users):
@@ -618,6 +636,9 @@ def validate(cfg: Config, gpus: list[Gpu], cts: list[CtState]) -> list[str]:
         for s in c.software:
             if s not in ("python", "uv") and not s.startswith(("apt:", "pip:")):
                 errors.append(f"Container '{c.name}': unknown software '{s}' (python, uv, apt:PKG, pip:PKG)")
+    for k in cfg.sysctl:
+        if not re.match(r"^[a-z0-9_.]+$", k):
+            errors.append(f"[sysctl]: invalid key '{k}'")
     for (gpu, prof), who in use.items():
         layout = cfg.gpus.get(gpu, "missing")
         if layout == "missing":
@@ -759,6 +780,22 @@ def modeset_missing() -> list[str]:
     return missing
 
 
+SYSCTL_PATH = "/etc/sysctl.d/90-mig-lxd.conf"
+
+
+def _read(path: str) -> str | None:
+    try:
+        return open(path, encoding="utf-8").read()
+    except OSError:
+        return None
+
+
+def sysctl_text(cfg: Config) -> str:
+    return "# mig-lxd: kernel settings for the containers (they share this kernel)\n" + "".join(
+        f"{k} = {v}\n" for k, v in sorted(cfg.sysctl.items())
+    )
+
+
 def setup_status(cfg: Config) -> list[str]:
     need = []
     if not lxd_installed():
@@ -776,6 +813,8 @@ def setup_status(cfg: Config) -> list[str]:
         need.append(f"create btrfs storage pool '{POOL}' on {cfg.storage_device}")
     if not lxd_installed() or not ok(["lxc", "profile", "show", PROFILE]):
         need.append(f"create LXD profile '{PROFILE}' (NVIDIA runtime, hard memory limits)")
+    if cfg.sysctl and sysctl_text(cfg) != _read(SYSCTL_PATH):
+        need.append(f"kernel settings {', '.join(f'{k}={v}' for k, v in cfg.sysctl.items())} ({SYSCTL_PATH})")
     if firewall_missing(cfg):
         need.append(f"open UFW for the LXD bridge and SSH ports {cfg.ssh_port_base}-{cfg.ssh_port_base + 99}")
     try:
@@ -829,7 +868,11 @@ def make_plan(cfg: Config, gpus: list[Gpu], cts: list[CtState], prune: bool) -> 
             changes.append(f"disk {fmt_gb(cur.disk or 0)} -> {fmt_gb(spec.disk)}")
         if changes:
             plan.updates[spec.name] = changes
-        if (cur.gpu, cur.profile, cur.slot) != (spec.gpu, spec.profile, slot) or spec.gpu in plan.gpu_changes:
+        if cur.network != spec.network:
+            plan.notes.append(f"{spec.name}: network {cur.network} -> {spec.network} is not changed in place (delete and recreate it)")
+        if spec.nogpu:
+            pass
+        elif (cur.gpu, cur.profile, cur.slot) != (spec.gpu, spec.profile, slot) or spec.gpu in plan.gpu_changes:
             plan.rebinds[spec.name] = (spec.gpu, spec.profile, slot)
             if cur.status == "Running":
                 plan.stops.add(spec.name)
@@ -922,6 +965,8 @@ def print_plan(cfg: Config, plan: Plan, gpus: list[Gpu], cts: list[CtState]) -> 
 
 
 def slice_desc(spec: CtSpec, slot: int | None) -> str:
+    if spec.nogpu:
+        return "no GPU" + (", LAN IP" if spec.network == "lan" else "")
     if spec.profile is None:
         return f"GPU {spec.gpu} whole"
     return f"GPU {spec.gpu} {spec.profile}@{slot}"
@@ -1019,6 +1064,10 @@ devices:
 """
     run(["lxc", "profile", "edit", PROFILE], input_text=profile_yaml)
     firewall_rules(cfg)
+    if cfg.sysctl and sysctl_text(cfg) != _read(SYSCTL_PATH):
+        with open(SYSCTL_PATH, "w") as f:
+            f.write(sysctl_text(cfg))
+        run(["sysctl", "-p", SYSCTL_PATH])
 
     unit = f"""[Unit]
 Description=mig-lxd: recreate MIG layouts and start the GPU containers
@@ -1151,6 +1200,8 @@ def gpu_device_args(spec: CtSpec, slot: int | None, gpus: list[Gpu]) -> list[str
 
 
 def bind_gpu(name: str, spec: CtSpec, slot: int | None, gpus: list[Gpu]) -> None:
+    if spec.nogpu:
+        return
     lxc("config", "device", "remove", name, "gpu", check=False)
     lxc("config", "device", "add", name, "gpu", "gpu", *gpu_device_args(spec, slot, gpus))
     lxc("config", "set", name, f"{KEY}gpu={spec.gpu}", f"{KEY}profile={spec.profile or ''}", f"{KEY}slot={'' if slot is None else slot}")
@@ -1236,6 +1287,32 @@ def vm_ip() -> str:
     return m.group(1) if m else "VM-IP"
 
 
+def uplink() -> str:
+    """Interface of the VM's default route: parent of the 'lan' containers' macvlan NICs."""
+    m = re.search(r"dev (\S+)", run(["ip", "-4", "route", "get", "1.1.1.1"], check=False))
+    if not m:
+        raise RuntimeError("no default route in the VM: cannot attach 'lan' containers")
+    return m.group(1)
+
+
+def ct_ip(name: str) -> str:
+    """First IPv4 of the container's eth0 (empty if it has none yet)."""
+    for _ in range(30):
+        st = lxc_json("query", f"/1.0/instances/{name}/state") or {}
+        for a in ((st.get("network") or {}).get("eth0") or {}).get("addresses", []):
+            if a.get("family") == "inet":
+                return a["address"]
+        time.sleep(2)
+    return ""
+
+
+def ssh_target(c, ip: str) -> str:
+    """Where the users of container c log in."""
+    if c.network == "lan":
+        return f"{ct_ip(c.name) or '<DHCP IP>'}:22"
+    return f"{ip}:{c.port}" if c.port else "-"
+
+
 def apply(cfg: Config, config_path: str, prune: bool) -> int:
     gpus, cts = read_gpus(), read_containers()
     plan = make_plan(cfg, gpus, cts, prune)
@@ -1286,14 +1363,22 @@ def apply(cfg: Config, config_path: str, prune: bool) -> int:
             cur = None
         if cur is None:
             log(f"  + {spec.name}: create ({slice_desc(spec, slot)})")
-            port = next_port(cfg, used_ports)
+            port = next_port(cfg, used_ports) if spec.network == "bridge" else None
+            extra = ["-c", f"{KEY}ssh_port={port}"] if port else []
+            if spec.nogpu:
+                extra += ["-c", "nvidia.runtime=false"]
             lxc(
                 "init", spec.image, spec.name, "-p", "default", "-p", PROFILE,
                 "-c", f"limits.cpu={spec.cpu}", "-c", f"limits.memory={lxd_size(spec.memory)}",
-                "-c", f"{KEY}managed=true", "-c", f"{KEY}ssh_port={port}",
+                "-c", f"{KEY}managed=true", "-c", f"{KEY}network={spec.network}", *extra,
                 "-d", f"root,size={lxd_size(spec.disk)}", timeout=1800,
             )
-            lxc("config", "device", "add", spec.name, "ssh", "proxy", f"listen=tcp:0.0.0.0:{port}", "connect=tcp:127.0.0.1:22")
+            if spec.network == "lan":
+                # own MAC on the VM's LAN: the network's DHCP gives it an address (the VM itself
+                # cannot reach its macvlan children; everything else on the LAN can)
+                lxc("config", "device", "add", spec.name, "eth0", "nic", "nictype=macvlan", f"parent={uplink()}", "name=eth0")
+            else:
+                lxc("config", "device", "add", spec.name, "ssh", "proxy", f"listen=tcp:0.0.0.0:{port}", "connect=tcp:127.0.0.1:22")
             bind_gpu(spec.name, spec, slot, gpus)
             lxc("start", spec.name)
             wait_ready(spec.name)
@@ -1302,7 +1387,7 @@ def apply(cfg: Config, config_path: str, prune: bool) -> int:
             lxc("config", "set", spec.name, f"{KEY}software={','.join(spec.software)}")
             new = add_users(spec.name, spec.users)
             lxc("config", "set", spec.name, f"{KEY}users={','.join(spec.users)}", f"{KEY}provisioned=true")
-            creds += emit_creds(spec.name, new, port, ip)
+            creds += emit_creds(spec.name, new, ssh_target(read_ct(spec.name), ip))
             continue
         if spec.name in plan.updates:
             log(f"  ~ {spec.name}: {', '.join(plan.updates[spec.name])}")
@@ -1325,8 +1410,7 @@ def apply(cfg: Config, config_path: str, prune: bool) -> int:
         if spec.name in plan.add_users:
             log(f"  + {spec.name}: users {', '.join(plan.add_users[spec.name])}")
             new = add_users(spec.name, plan.add_users[spec.name])
-            port = cur.port
-            creds += emit_creds(spec.name, new, port, ip)
+            creds += emit_creds(spec.name, new, ssh_target(cur, ip))
             lxc("config", "set", spec.name, f"{KEY}users={','.join(sorted(set(cur.users + spec.users)))}")
 
     # Containers kept on a changed GPU but not in the config are left stopped without GPU
@@ -1339,10 +1423,15 @@ def apply(cfg: Config, config_path: str, prune: bool) -> int:
     return 0
 
 
-def emit_creds(container: str, new: dict[str, str], port: int | None, ip: str) -> list[dict]:
+def ssh_cmd(user: str, target: str) -> str:
+    host, _, port = target.rpartition(":")
+    return f"ssh {user}@{host}" if port == "22" else f"ssh -p {port} {user}@{host}"
+
+
+def emit_creds(container: str, new: dict[str, str], target: str) -> list[dict]:
     """Prints the new credentials right away (machine-readable line for the wrapper), so a
     later failure in the same run does not lose them."""
-    rows = [{"container": container, "user": u, "password": p, "ssh": f"ssh -p {port} {u}@{ip}"} for u, p in new.items()]
+    rows = [{"container": container, "user": u, "password": p, "ssh": ssh_cmd(u, target)} for u, p in new.items()]
     if rows:
         log("MIGLXD_CREDENTIALS_JSON " + json.dumps(rows))
     return rows
@@ -1375,10 +1464,11 @@ def print_status(gpus: list[Gpu], cts: list[CtState], ip: str | None = None) -> 
         if not c.managed:
             rows.append([c.name, c.status, "(not managed)", "", "", "", "", ""])
             continue
-        sl = f"GPU {c.gpu} " + (f"{c.profile}@{c.slot}" if c.profile else "whole")
+        sl = "-" if c.gpu is None else f"GPU {c.gpu} " + (f"{c.profile}@{c.slot}" if c.profile else "whole")
+        ssh = ssh_target(c, ip) if c.status == "Running" or c.network != "lan" else "-"
         rows.append([
             c.name, c.status, sl, str(c.cpu or "-"), fmt_gb(c.memory) if c.memory else "-",
-            fmt_gb(c.disk) if c.disk else "-", f"{ip}:{c.port}" if c.port else "-", ",".join(c.users),
+            fmt_gb(c.disk) if c.disk else "-", ssh, ",".join(c.users),
         ])
     log("Containers:")
     if len(rows) == 1:
@@ -1567,8 +1657,9 @@ def main() -> int:
             pw = gen_password()
             run(["lxc", "exec", a.container, "--", "chpasswd"], input_text=f"{a.user}:{pw}\n")
             ct_exec(a.container, f"passwd --expire {shlex.quote(a.user)} >/dev/null")
-            log(f"{a.user}@{a.container}: new temporary password {pw} (ssh -p {c.port} {a.user}@{vm_ip()})")
-            log("MIGLXD_CREDENTIALS_JSON " + json.dumps([{"container": a.container, "user": a.user, "password": pw, "ssh": f"ssh -p {c.port} {a.user}@{vm_ip()}"}]))
+            ssh = ssh_cmd(a.user, ssh_target(c, vm_ip()))
+            log(f"{a.user}@{a.container}: new temporary password {pw} ({ssh})")
+            log("MIGLXD_CREDENTIALS_JSON " + json.dumps([{"container": a.container, "user": a.user, "password": pw, "ssh": ssh}]))
             return 0
         cfg = load_config(a.config)
         _, _, plan, rc = check(cfg, a.prune)
