@@ -54,8 +54,11 @@ See [`config/mig/example.toml`](../config/mig/example.toml). Real files (`config
 | `memory_reserve` | RAM kept for the VM itself (default `max(8GB, 10%)`) |
 | `max_cpu_overcommit` | Requested vCPUs / VM vCPUs allowed before failing (default 2.0) |
 | `[gpus]` | `index = "layout"` or `"whole"`. GPUs not listed are not touched |
-| `[defaults]` | `cpu`, `memory`, `disk`, `image`, `software` for every container |
-| `[[containers]]` | `name`, `gpu`, `profile` (MIG GPUs only), `users`, and any default to override |
+| `[sysctl]` | Kernel settings of the VM, shared by every container (e.g. `"vm.max_map_count" = 262144` for Elasticsearch) |
+| `[defaults]` | `cpu`, `memory`, `disk`, `image`, `software`, `network` for every container |
+| `[[containers]]` | `name`, `gpu` (index, or `"none"`/left out for a container without GPU), `profile` (MIG GPUs only), `network`, `users`, and any default to override |
+
+`network = "bridge"` (default): NAT on `lxdbr0`, SSH on a port of the VM IP. `network = "lan"`: the container gets its own MAC on the VM's LAN (macvlan) and an address from the network's DHCP; SSH is port 22 of that address. Use it when containers in different VMs must talk to each other (e.g. a 3-node Elasticsearch cluster with one node per physical server). The VM itself cannot reach its own `lan` containers (macvlan); every other host can. Reserve their MACs in the DHCP (`lxc config get <name> volatile.eth0.hwaddr`) so the addresses do not change.
 
 ### `[lab]`: one container per person
 
@@ -120,7 +123,7 @@ The first time:
 - **Package hold** on the kernel and the NVIDIA driver (`apt-mark hold` + unattended-upgrades blacklist). An automatic kernel upgrade without its NVIDIA module leaves the VM without GPUs (it happened to VM 106). Upgrade them by hand, together, and reboot.
 - **Docker coexistence:** Docker sets the `FORWARD` policy to `DROP`; rules in `DOCKER-USER` let the LXD bridge through.
 
-Per container: `ubuntu:24.04`, its slice (`gputype=mig` with the MIG UUID, or `gputype=physical`), CPU/RAM/disk limits, SSH on its port (LXD proxy device from the VM IP), password login, the users and the software.
+Per container: `ubuntu:24.04`, its slice (`gputype=mig` with the MIG UUID, or `gputype=physical`; none and `nvidia.runtime=false` for `gpu = "none"`), CPU/RAM/disk limits, SSH on its port (LXD proxy device from the VM IP) or on its own LAN address (`network = "lan"`), password login, the users and the software. `[sysctl]` goes to `/etc/sysctl.d/90-mig-lxd.conf`.
 
 State lives in the containers themselves (`user.miglxd.*` keys: GPU, profile, slot, SSH port, users). Containers without those keys are never touched.
 

@@ -9,6 +9,10 @@ ssh_port_base = 2201           # SSH of each container: ssh -p <port> user@<VM I
 # memory_reserve = "10GB"      # RAM kept for the VM itself (default: max(8GB, 10%))
 # max_cpu_overcommit = 2.0     # requested vCPUs / VM vCPUs before failing
 
+# Kernel settings of the VM (all containers share its kernel), e.g. for Elasticsearch:
+# [sysctl]
+# "vm.max_map_count" = 262144
+
 # GPU index -> full MIG layout, or "whole" (no MIG, one container gets the whole GPU).
 # GPUs not listed are left as they are. List the layouts: vm/vm_mig_lxd.sh layouts
 [gpus]
@@ -45,6 +49,16 @@ memory = "32GB"
 disk = "200GB"
 software = ["python", "uv", "pip:vllm"]
 users = ["tecnalia"]
+
+[[containers]]
+name = "es-node-1"
+gpu = "none"                   # no GPU (or leave 'gpu' out)
+network = "lan"                # own LAN IP from the DHCP, SSH on port 22 of it
+cpu = 2
+memory = "4GB"
+disk = "40GB"
+software = []
+users = ["grupo1"]
 
 # [lab]: one container per person, all with the same slice. The GPU of each one is
 # chosen automatically (free slices of 'profile', GPU 0 first); existing containers
