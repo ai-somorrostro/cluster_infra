@@ -46,6 +46,7 @@ EOF
 ENGINE="$INFRA_ROOT/guest/mig_lxd.py"
 WIZARD="$INFRA_ROOT/vm/mig_wizard.py"
 STAGE=/var/lib/mig-lxd/staging
+MOTD_SRC="${MIG_MOTD_DIR:-$INFRA_ROOT/motds/iab}"  # login message for every container ('motd = false' in CONFIG skips it)
 CMD=""
 VM_OPT=""
 PRUNE=0
@@ -104,7 +105,21 @@ open_vm() {
   DRY_RUN=0
   step "Staging dir" guest_exec "$VMID" mkdir -p "$STAGE" || { vm_fail "cannot write in the VM"; summary; }
   step "Upload engine" guest_upload "$VMID" "$ENGINE" "$STAGE/mig_lxd.py" 0755 || { vm_fail "cannot upload the engine"; summary; }
+  if [[ -d "$MOTD_SRC" ]]; then
+    step "Upload login message ($(basename "$MOTD_SRC"))" upload_motd || log_warn "the login message was not staged"
+  fi
   DRY_RUN="$d"
+}
+
+# upload_motd — stages the login message files (motds/<name>/) in the VM; the engine puts them in
+#   every container (*.sh -> /etc/update-motd.d/60-<name>, other files -> /etc/iab-cluster/)
+upload_motd() {
+  local f
+  guest_exec "$VMID" sh -c "rm -rf '$STAGE/motd' && mkdir -p '$STAGE/motd'" || return 1
+  for f in "$MOTD_SRC"/*; do
+    [[ -f "$f" ]] || continue
+    guest_upload "$VMID" "$f" "$STAGE/motd/$(basename "$f")" 0644 || return 1
+  done
 }
 
 # upload_config CONFIG — sends CONFIG to the VM with [lab].users_file read in locally,

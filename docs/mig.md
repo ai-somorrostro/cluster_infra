@@ -54,6 +54,7 @@ See [`config/mig/example.toml`](../config/mig/example.toml). Real files (`config
 | `memory_reserve` | RAM kept for the VM itself (default `max(8GB, 10%)`) |
 | `max_cpu_overcommit` | Requested vCPUs / VM vCPUs allowed before failing (default 2.0) |
 | `[gpus]` | `index = "layout"` or `"whole"`. GPUs not listed are not touched |
+| `motd` | `true` (default) puts the login message of `motds/iab/` (or `$MIG_MOTD_DIR`) in every container; `false` skips it |
 | `[sysctl]` | Kernel settings of the VM, shared by every container (e.g. `"vm.max_map_count" = 262144` for Elasticsearch) |
 | `[defaults]` | `cpu`, `memory`, `disk`, `image`, `software`, `network` for every container |
 | `[[containers]]` | `name`, `gpu` (index, or `"none"`/left out for a container without GPU), `profile` (MIG GPUs only), `network`, `users`, and any default to override |
@@ -123,7 +124,7 @@ The first time:
 - **Package hold** on the kernel and the NVIDIA driver (`apt-mark hold` + unattended-upgrades blacklist). An automatic kernel upgrade without its NVIDIA module leaves the VM without GPUs (it happened to VM 106). Upgrade them by hand, together, and reboot.
 - **Docker coexistence:** Docker sets the `FORWARD` policy to `DROP`; rules in `DOCKER-USER` let the LXD bridge through.
 
-Per container: `ubuntu:24.04`, its slice (`gputype=mig` with the MIG UUID, or `gputype=physical`; none and `nvidia.runtime=false` for `gpu = "none"`), CPU/RAM/disk limits, SSH on its port (LXD proxy device from the VM IP) or on its own LAN address (`network = "lan"`), password login, the users and the software. `[sysctl]` goes to `/etc/sysctl.d/90-mig-lxd.conf`.
+Per container: `ubuntu:24.04`, its slice (`gputype=mig` with the MIG UUID, or `gputype=physical`; none and `nvidia.runtime=false` for `gpu = "none"`), CPU/RAM/disk limits, SSH on its port (LXD proxy device from the VM IP) or on its own LAN address (`network = "lan"`), password login, the users and the software. `[sysctl]` goes to `/etc/sysctl.d/90-mig-lxd.conf`. Login message: every `*.sh` of `motds/iab/` becomes `/etc/update-motd.d/60-<name>` (runs at each SSH login) and the other files go to `/etc/iab-cluster/`; `fortune-mod`, `cowsay` and `lolcat` are installed for it. Containers carry a hash of it (`user.miglxd.motd`), so `apply` updates every container when the files change.
 
 State lives in the containers themselves (`user.miglxd.*` keys: GPU, profile, slot, SSH port, users). Containers without those keys are never touched.
 

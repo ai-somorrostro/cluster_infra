@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import itertools
 import json
 import os
@@ -40,6 +41,12 @@ INSTALL_DIR = "/opt/mig-lxd"
 CONFIG_PATH = "/etc/mig-lxd/config.toml"
 ARCHIVE_DIR = "/var/lib/mig-lxd/archive"
 UNIT_PATH = "/etc/systemd/system/mig-lxd-boot.service"
+# Login message (MOTD) for every container: vm_mig_lxd.sh stages the files of motds/<name>/ here.
+# *.sh -> /etc/update-motd.d/60-<name> (run at each SSH login), any other file -> /etc/iab-cluster/<file>.
+MOTD_STAGE = "/var/lib/mig-lxd/staging/motd"
+MOTD_DIR = "/opt/mig-lxd/motd"
+MOTD_DATA_DIR = "/etc/iab-cluster"
+MOTD_PKGS = ["fortune-mod", "fortunes-min", "cowsay", "lolcat"]  # optional extras the MOTD script uses
 POOL = "miglxd"
 PROFILE = "miglxd"
 BRIDGE = "lxdbr0"
@@ -245,6 +252,7 @@ class Config:
     max_cpu_overcommit: float
     raw: str = ""
     sysctl: dict[str, str] = field(default_factory=dict)  # kernel settings of the VM (shared by all containers)
+    motd: bool = True  # install the staged login message in every container
     lab: Lab | None = None
 
 
@@ -358,6 +366,7 @@ def load_config(path: str) -> Config:
         max_cpu_overcommit=float(d.get("max_cpu_overcommit", 2.0)),
         raw=raw,
         sysctl={str(k): str(v) for k, v in d.get("sysctl", {}).items()},
+        motd=bool(d.get("motd", True)),
     )
 
 
@@ -476,6 +485,7 @@ class CtState:
     software: list[str]
     provisioned: bool = True
     network: str = "bridge"
+    motd: str = ""
 
 
 def read_containers() -> list[CtState]:
@@ -512,6 +522,7 @@ def read_containers() -> list[CtState]:
                 software=[s for s in cfg.get(KEY + "software", "").split(",") if s],
                 provisioned=cfg.get(KEY + "provisioned") == "true",
                 network=cfg.get(KEY + "network") or "bridge",
+                motd=cfg.get(KEY + "motd") or "",
             )
         )
     return out
@@ -735,11 +746,12 @@ class Plan:
     stops: set[str] = field(default_factory=set)
     notes: list[str] = field(default_factory=list)
     setup_needed: list[str] = field(default_factory=list)
+    motd: list[str] = field(default_factory=list)  # existing containers whose login message is missing or old
 
     def empty(self) -> bool:
         return not (
             self.gpu_changes or self.creates or self.updates or self.rebinds or self.add_users
-            or self.add_software or self.deletes or self.setup_needed
+            or self.add_software or self.deletes or self.setup_needed or self.motd
         )
 
 
@@ -826,6 +838,54 @@ def setup_status(cfg: Config) -> list[str]:
     return need
 
 
+def motd_source() -> str | None:
+    """Directory with the login message files: the freshly staged one, else the installed copy."""
+    for d in (MOTD_STAGE, MOTD_DIR):
+        if os.path.isdir(d) and any(os.path.isfile(os.path.join(d, f)) for f in os.listdir(d)):
+            return d
+    return None
+
+
+def motd_hash() -> str:
+    """Short hash of the login message files + extra packages ("" = no MOTD available)."""
+    src = motd_source()
+    if not src:
+        return ""
+    h = hashlib.sha256(" ".join(MOTD_PKGS).encode())
+    for f in sorted(os.listdir(src)):
+        path = os.path.join(src, f)
+        if os.path.isfile(path):
+            h.update(f.encode() + b"\0" + open(path, "rb").read())
+    return h.hexdigest()[:12]
+
+
+def motd_targets(src: str) -> list[tuple[str, str, str]]:
+    """(local file, path in the container, mode) for every MOTD file."""
+    out = []
+    for f in sorted(os.listdir(src)):
+        path = os.path.join(src, f)
+        if not os.path.isfile(path):
+            continue
+        if f.endswith(".sh"):
+            out.append((path, f"/etc/update-motd.d/60-{f[:-3]}", "0755"))
+        else:
+            out.append((path, f"{MOTD_DATA_DIR}/{f}", "0644"))
+    return out
+
+
+def install_motd(name: str) -> None:
+    src, h = motd_source(), motd_hash()
+    if not src:
+        return
+    for local, dest, mode in motd_targets(src):
+        lxc("file", "push", "--create-dirs", "--mode", mode, local, f"{name}{dest}")
+    # optional extras (fortune | cowsay | lolcat); the message works without them
+    run(["lxc", "exec", name, "--", "sh", "-c",
+         "DEBIAN_FRONTEND=noninteractive apt-get install -y -q " + " ".join(MOTD_PKGS) + " >/dev/null 2>&1"],
+        check=False, timeout=900)
+    lxc("config", "set", name, f"{KEY}motd={h}")
+
+
 def make_plan(cfg: Config, gpus: list[Gpu], cts: list[CtState], prune: bool) -> Plan:
     plan = Plan(setup_needed=setup_status(cfg))
     by_index = {g.index: g for g in gpus}
@@ -885,6 +945,11 @@ def make_plan(cfg: Config, gpus: list[Gpu], cts: list[CtState], prune: bool) -> 
         new_sw = [s for s in spec.software if s not in cur.software]
         if new_sw:
             plan.add_software[spec.name] = new_sw
+    h = motd_hash() if cfg.motd else ""
+    if h:
+        created = {s.name for s in plan.creates}
+        plan.motd = [s.name for s in cfg.containers
+                     if s.name not in created and s.name in current and current[s.name].motd != h]
     wanted = {c.name for c in cfg.containers}
     for c in cts:
         if c.managed and c.name not in wanted:
@@ -954,6 +1019,8 @@ def print_plan(cfg: Config, plan: Plan, gpus: list[Gpu], cts: list[CtState]) -> 
         log(f"  + users {', '.join(users)} @ {name}")
     for name, sw in plan.add_software.items():
         log(f"  + software {', '.join(sw)} @ {name}")
+    if plan.motd:
+        log(f"  ~ login message (MOTD) -> {len(plan.motd)} containers: {', '.join(plan.motd)}")
     for name in plan.deletes:
         log(f"  - {name:<16} (deleted; /home archived to {ARCHIVE_DIR} first)")
     if plan.stops:
@@ -984,6 +1051,9 @@ def setup_base(cfg: Config, config_path: str) -> None:
         shutil.copy(me, os.path.join(INSTALL_DIR, "mig_lxd.py"))
     if os.path.realpath(config_path) != CONFIG_PATH:
         shutil.copy(config_path, CONFIG_PATH)
+    if os.path.isdir(MOTD_STAGE) and os.listdir(MOTD_STAGE):
+        shutil.rmtree(MOTD_DIR, ignore_errors=True)
+        shutil.copytree(MOTD_STAGE, MOTD_DIR)
     os.chmod(CONFIG_PATH, 0o600)
 
     # Package hold: a kernel upgrade without its NVIDIA module leaves the VM without GPUs
@@ -1385,6 +1455,8 @@ def apply(cfg: Config, config_path: str, prune: bool) -> int:
             ct_exec(spec.name, BASE_SCRIPT)
             install_software(spec.name, spec.software)
             lxc("config", "set", spec.name, f"{KEY}software={','.join(spec.software)}")
+            if cfg.motd:
+                install_motd(spec.name)
             new = add_users(spec.name, spec.users)
             lxc("config", "set", spec.name, f"{KEY}users={','.join(spec.users)}", f"{KEY}provisioned=true")
             creds += emit_creds(spec.name, new, ssh_target(read_ct(spec.name), ip))
@@ -1412,6 +1484,13 @@ def apply(cfg: Config, config_path: str, prune: bool) -> int:
             new = add_users(spec.name, plan.add_users[spec.name])
             creds += emit_creds(spec.name, new, ssh_target(cur, ip))
             lxc("config", "set", spec.name, f"{KEY}users={','.join(sorted(set(cur.users + spec.users)))}")
+
+    for name in plan.motd:
+        log(f"  ~ {name}: login message (MOTD)")
+        if read_ct(name).status != "Running":
+            lxc("start", name)
+            wait_ready(name)
+        install_motd(name)
 
     # Containers kept on a changed GPU but not in the config are left stopped without GPU
     log("== Result")
