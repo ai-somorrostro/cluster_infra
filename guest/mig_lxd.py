@@ -51,6 +51,8 @@ POOL = "miglxd"
 PROFILE = "miglxd"
 BRIDGE = "lxdbr0"
 KEY = "user.miglxd."  # prefix of the LXD config keys this tool owns
+# docker = true: what Docker needs to start containers inside an (unprivileged) LXD container
+DOCKER_CONF = ("security.nesting", "security.syscalls.intercept.mknod", "security.syscalls.intercept.setxattr")
 GIB = 1024**3
 
 # ─── MIG geometry of an A800 / A100 40GB ────────────────────────────────────
@@ -234,6 +236,7 @@ class CtSpec:
     lab: bool = False  # generated from [lab]: GPU chosen by resolve_lab()
     nogpu: bool = False  # container without GPU ('gpu' left out or "none")
     network: str = "bridge"  # bridge: NAT on lxdbr0 + SSH port on the VM IP; lan: own LAN IP (macvlan, DHCP)
+    docker: bool = False  # nesting + syscall interception so Docker can run inside
 
 
 @dataclass
@@ -312,12 +315,16 @@ def load_config(path: str) -> Config:
         net = str(c.get("network", df.get("network", "bridge")))
         if net not in ("bridge", "lan"):
             raise ConfigError(f"{where}: network must be \"bridge\" or \"lan\"")
+        docker = c.get("docker", df.get("docker", False))
+        if not isinstance(docker, bool):
+            raise ConfigError(f"{where}: docker must be true or false")
         cts.append(
             CtSpec(
                 name=str(c["name"]),
                 gpu=None if nogpu else int(c["gpu"]),
                 nogpu=nogpu,
                 network=net,
+                docker=docker,
                 profile=(str(c["profile"]).lower() if c.get("profile") else None),
                 cpu=int(c.get("cpu", df["cpu"])),
                 memory=parse_size(c.get("memory", df["memory"]), f"{where}.memory"),
@@ -486,6 +493,7 @@ class CtState:
     provisioned: bool = True
     network: str = "bridge"
     motd: str = ""
+    docker: bool = False
 
 
 def read_containers() -> list[CtState]:
@@ -523,6 +531,7 @@ def read_containers() -> list[CtState]:
                 provisioned=cfg.get(KEY + "provisioned") == "true",
                 network=cfg.get(KEY + "network") or "bridge",
                 motd=cfg.get(KEY + "motd") or "",
+                docker=all(cfg.get(k) == "true" for k in DOCKER_CONF),
             )
         )
     return out
@@ -747,11 +756,12 @@ class Plan:
     notes: list[str] = field(default_factory=list)
     setup_needed: list[str] = field(default_factory=list)
     motd: list[str] = field(default_factory=list)  # existing containers whose login message is missing or old
+    docker: dict[str, bool] = field(default_factory=dict)  # container -> Docker support on/off (restarts it)
 
     def empty(self) -> bool:
         return not (
             self.gpu_changes or self.creates or self.updates or self.rebinds or self.add_users
-            or self.add_software or self.deletes or self.setup_needed or self.motd
+            or self.add_software or self.deletes or self.setup_needed or self.motd or self.docker
         )
 
 
@@ -928,6 +938,8 @@ def make_plan(cfg: Config, gpus: list[Gpu], cts: list[CtState], prune: bool) -> 
             changes.append(f"disk {fmt_gb(cur.disk or 0)} -> {fmt_gb(spec.disk)}")
         if changes:
             plan.updates[spec.name] = changes
+        if cur.docker != spec.docker:
+            plan.docker[spec.name] = spec.docker
         if cur.network != spec.network:
             plan.notes.append(f"{spec.name}: network {cur.network} -> {spec.network} is not changed in place (delete and recreate it)")
         if spec.nogpu:
@@ -1019,6 +1031,8 @@ def print_plan(cfg: Config, plan: Plan, gpus: list[Gpu], cts: list[CtState]) -> 
         log(f"  + users {', '.join(users)} @ {name}")
     for name, sw in plan.add_software.items():
         log(f"  + software {', '.join(sw)} @ {name}")
+    for name, on in plan.docker.items():
+        log(f"  ~ {name:<16} Docker support {'on' if on else 'off'} (restarts the container)")
     if plan.motd:
         log(f"  ~ login message (MOTD) -> {len(plan.motd)} containers: {', '.join(plan.motd)}")
     for name in plan.deletes:
@@ -1437,6 +1451,8 @@ def apply(cfg: Config, config_path: str, prune: bool) -> int:
             extra = ["-c", f"{KEY}ssh_port={port}"] if port else []
             if spec.nogpu:
                 extra += ["-c", "nvidia.runtime=false"]
+            if spec.docker:
+                extra += [a for k in DOCKER_CONF for a in ("-c", f"{k}=true")]
             lxc(
                 "init", spec.image, spec.name, "-p", "default", "-p", PROFILE,
                 "-c", f"limits.cpu={spec.cpu}", "-c", f"limits.memory={lxd_size(spec.memory)}",
@@ -1472,6 +1488,17 @@ def apply(cfg: Config, config_path: str, prune: bool) -> int:
             if read_ct(spec.name).status == "Running":
                 lxc("stop", spec.name, "--force")
             bind_gpu(spec.name, spec, slot, gpus)
+        if spec.name in plan.docker:
+            log(f"  ~ {spec.name}: Docker support {'on' if spec.docker else 'off'}")
+            if spec.docker:
+                lxc("config", "set", spec.name, *[f"{k}=true" for k in DOCKER_CONF])
+            else:
+                for k in DOCKER_CONF:
+                    lxc("config", "unset", spec.name, k)
+            if read_ct(spec.name).status == "Running":  # nesting only applies on start
+                lxc("stop", spec.name, "--timeout", "60", check=False)
+                if read_ct(spec.name).status == "Running":
+                    lxc("stop", spec.name, "--force")
         if read_ct(spec.name).status != "Running":
             lxc("start", spec.name)
             wait_ready(spec.name)

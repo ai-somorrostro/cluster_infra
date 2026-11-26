@@ -49,6 +49,7 @@ memory = "32GB"
 disk = "200GB"
 software = ["python", "uv", "pip:vllm"]
 users = ["tecnalia"]
+docker = true                  # allow Docker inside (nesting); the users install Docker themselves
 
 [[containers]]
 name = "es-node-1"
