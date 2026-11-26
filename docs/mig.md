@@ -57,7 +57,9 @@ See [`config/mig/example.toml`](../config/mig/example.toml). Real files (`config
 | `motd` | `true` (default) puts the login message of `motds/iab/` (or `$MIG_MOTD_DIR`) in every container; `false` skips it |
 | `[sysctl]` | Kernel settings of the VM, shared by every container (e.g. `"vm.max_map_count" = 262144` for Elasticsearch) |
 | `[defaults]` | `cpu`, `memory`, `disk`, `image`, `software`, `network` for every container |
-| `[[containers]]` | `name`, `gpu` (index, or `"none"`/left out for a container without GPU), `profile` (MIG GPUs only), `network`, `users`, and any default to override |
+| `[[containers]]` | `name`, `gpu` (index, or `"none"`/left out for a container without GPU), `profile` (MIG GPUs only), `network`, `docker`, `users`, and any default to override |
+
+`docker = true` lets users run Docker inside the container: it sets `security.nesting`, `security.syscalls.intercept.mknod` and `security.syscalls.intercept.setxattr` (the container stays unprivileged). Docker itself is not installed. Turning it on or off in `apply` restarts the container. Without it, `docker run` fails with `open sysctl net.ipv4.ip_unprivileged_port_start file: ... permission denied`. For GPUs in Docker the users also need `nvidia-container-toolkit`.
 
 `network = "bridge"` (default): NAT on `lxdbr0`, SSH on a port of the VM IP. `network = "lan"`: the container gets its own MAC on the VM's LAN (macvlan) and an address from the network's DHCP; SSH is port 22 of that address. Use it when containers in different VMs must talk to each other (e.g. a 3-node Elasticsearch cluster with one node per physical server). The VM itself cannot reach its own `lan` containers (macvlan); every other host can. Reserve their MACs in the DHCP (`lxc config get <name> volatile.eth0.hwaddr`) so the addresses do not change.
 
